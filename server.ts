@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import crypto from 'crypto';
+import fs from 'fs';
 
 import {
   initDb,
@@ -384,7 +385,18 @@ wss.on('connection', (ws) => {
 
 // Self Keep-Alive / Auto Ping loop (Every 5 minutes to maintain WebSockets and avoid cold starts)
 function startAutoPingDaemon() {
-  const hostUrl = process.env.APP_URL || 'http://localhost:3000/api/health';
+  let hostUrl = process.env.APP_URL || 'http://localhost:3000/api/health';
+  if (hostUrl && !hostUrl.startsWith('http://') && !hostUrl.startsWith('https://')) {
+    hostUrl = 'https://' + hostUrl;
+  }
+  try {
+    const parsed = new URL(hostUrl);
+    if (parsed.pathname === '/') {
+      hostUrl = new URL('/api/health', hostUrl).toString();
+    }
+  } catch (err) {
+    // Fallback if parsing fails
+  }
   console.log(`[SYS] Initializing auto-ping warm loop targeting: ${hostUrl}`);
   
   setInterval(async () => {
@@ -411,7 +423,14 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(_dirname, 'dist');
+    // Dynamically locate production static assets directory based on bundle location
+    let distPath = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(path.join(_dirname, 'index.html'))) {
+      distPath = _dirname;
+    } else if (fs.existsSync(path.join(_dirname, 'dist', 'index.html'))) {
+      distPath = path.join(_dirname, 'dist');
+    }
+    console.log(`[SYS] Serving production static files from: ${distPath}`);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
