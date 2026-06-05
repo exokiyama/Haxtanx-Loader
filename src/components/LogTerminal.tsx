@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LogEntry } from '../types';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { Trash2, AlertCircle, FileText, Search, Play, Pause, ChevronRight } from 'lucide-react';
 
 interface LogTerminalProps {
@@ -21,15 +19,11 @@ export const LogTerminal: React.FC<LogTerminalProps> = ({ sessionId, isConnected
     let active = true;
     const fetchLogs = async () => {
       try {
-        const q = query(
-          collection(db, 'sessions', sessionId, 'logs'),
-          orderBy('timestamp', 'desc'),
-          limit(50)
-        );
-        const snap = await getDocs(q);
-        if (active) {
-          const loaded = snap.docs.map(doc => doc.data() as LogEntry);
-          // Firestore query is ordered desc, let's reverse to show oldest first in scrolling terminal
+        const res = await fetch(`/api/supabase/sessions/${sessionId}/logs`);
+        const data = await res.json();
+        if (active && data.success) {
+          const loaded = data.logs as LogEntry[];
+          // Database logs are ordered desc, let's reverse to show oldest first in scrolling terminal
           setLogs(loaded.reverse());
         }
       } catch (err) {

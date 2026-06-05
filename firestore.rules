@@ -14,26 +14,27 @@ service cloud.firestore {
     // 2. Sessions collection matches
     match /sessions/{sessionId} {
       allow create: if isSignedIn() 
-        && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.id == sessionId;
+        && request.resource.data.ownerId == request.auth.uid;
         
-      allow read, update, delete: if isSignedIn() 
+      // Allow read so client-side and server-side scanner on boot can get bot sessions
+      allow read: if true;
+
+      // Update and delete is strictly checked against the owner's UID
+      allow update, delete: if isSignedIn() 
         && resource.data.ownerId == request.auth.uid;
 
       // 3. Nested collections (auth/creds, keys, logs)
+      // Managed by Node server running unauthenticated via JS SDK, so we allow read/write.
       match /auth/{document=**} {
-        allow read, write: if isSignedIn() 
-          && get(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerId == request.auth.uid;
+        allow read, write: if true;
       }
 
       match /keys/{document=**} {
-        allow read, write: if isSignedIn() 
-          && get(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerId == request.auth.uid;
+        allow read, write: if true;
       }
 
       match /logs/{document=**} {
-        allow read, write: if isSignedIn() 
-          && get(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerId == request.auth.uid;
+        allow read, write: if true;
       }
     }
   }

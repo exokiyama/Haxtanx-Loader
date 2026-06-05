@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { BotSession, LeakImage } from '../types';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { Plus, Trash, Save, HelpCircle, AlertTriangle } from 'lucide-react';
 
 interface BotConfigPanelProps {
@@ -27,14 +26,12 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
   const [mentDelay, setMentDelay] = useState(session.delays?.ment || 10);
   const [leakDelay, setLeakDelay] = useState(session.delays?.leak || 30);
 
-  const docPath = `sessions/${session.id}`;
-
   const updateFields = async (fields: Partial<BotSession>) => {
     try {
-      const docRef = doc(db, 'sessions', session.id);
-      await updateDoc(docRef, fields);
+      const { error } = await supabase.from('sessions').update(fields).eq('id', session.id);
+      if (error) throw error;
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, docPath);
+      console.error('Failed to update session parameter fields:', err);
     }
   };
 

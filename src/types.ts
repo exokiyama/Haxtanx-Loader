@@ -49,6 +49,8 @@ export interface BotSession {
   muted: string[];
   mentUsers: string[];
   leakImages: LeakImage[];
+  prefix?: string;
+  haterNames?: string[];
   createdAt: number;
 }
 

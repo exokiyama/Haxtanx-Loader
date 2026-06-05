@@ -3,8 +3,7 @@ import { BotSession, LogEntry } from '../types';
 import { BotConfigPanel } from './BotConfigPanel';
 import { LogTerminal } from './LogTerminal';
 import { BotStatsWidget } from './BotStatsWidget';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { LogOut, Play, Square, RefreshCcw, Wifi, WifiOff, RefreshCw, KeyRound, Smartphone, Layers, AlertCircle, Copy, Check } from 'lucide-react';
 
 // Use standard client-side qrcode generator library dynamically to display WhatsApp login QR codes
@@ -140,9 +139,9 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
         body: JSON.stringify({ sessionId: session.id })
       }).catch(() => {});
 
-      // Delete Firebase config
-      const docRef = doc(db, 'sessions', session.id);
-      await deleteDoc(docRef);
+      // Delete Bot profile config
+      const { error } = await supabase.from('sessions').delete().eq('id', session.id);
+      if (error) throw error;
       onBack();
     } catch (err) {
       console.error(err);

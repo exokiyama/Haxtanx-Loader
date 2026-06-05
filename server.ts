@@ -4,24 +4,45 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { initializeApp } from 'firebase/app';
+import crypto from 'crypto';
+
 import {
-  getFirestore,
-  doc,
-  updateDoc,
-  collection,
-  getDocs,
-  deleteDoc
-} from 'firebase/firestore';
+  initDb,
+  getSessions as dbGetSessions,
+  getAllActiveSessions,
+  getSession as dbGetSession,
+  saveSession as dbSaveSession,
+  updateSessionFields as dbUpdateSessionFields,
+  deleteSession as dbDeleteSession,
+  deleteBaileysCreds,
+  clearBaileysKeys,
+  getLogs as dbGetLogs,
+  clearLogs as dbClearLogs,
+  getUser,
+  registerUser,
+  ADMIN_USERNAME,
+  ADMIN_PASSWORD
+} from './src/server/db.js';
+
 import { SessionManager, WhatsAppBotInstance } from './src/server/sessionManager.js';
-import firebaseConfig from './firebase-applet-config.json';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Support both ESM (tsx development) and bundled CJS (node production) environments
+let _filename = '';
+let _dirname = '';
 
-// Init server-side Firebase
-const fbApp = initializeApp(firebaseConfig);
-const db = getFirestore(fbApp, firebaseConfig.firestoreDatabaseId);
+try {
+  _filename = __filename;
+  _dirname = __dirname;
+} catch {
+  // Safe ESM fallback for development environment compilation
+  try {
+    _filename = fileURLToPath(import.meta.url);
+    _dirname = path.dirname(_filename);
+  } catch {
+    _filename = path.join(process.cwd(), 'server.ts');
+    _dirname = process.cwd();
+  }
+}
 
 const app = express();
 app.use(express.json());
@@ -64,24 +85,19 @@ function bindBotEvents(sessionId: string, inst: WhatsAppBotInstance) {
   });
 }
 
-// Auto-activate any connected bots upon server startup
+// Auto-activate any connected/active bots upon server startup
 async function autoStartActiveSessions() {
   console.log('[SYS] scanning for active bots to reconnect...');
   try {
-    const sessionsCol = collection(db, 'sessions');
-    const snap = await getDocs(sessionsCol);
-    for (const sDoc of snap.docs) {
-      const data = sDoc.data();
-      // If session was connected, let's restore the handshake automatically
-      if (data.status === 'Connected' || data.status === 'Connecting') {
-        const id = sDoc.id;
-        console.log(`[SYS] Reconnecting active session ID: ${id}`);
-        const inst = SessionManager.getOrCreateInstance(id);
-        bindBotEvents(id, inst);
-        inst.connect().catch(e => {
-          console.error(`[SYS] Failed to reconnect ${id}:`, e);
-        });
-      }
+    const active = await getAllActiveSessions();
+    console.log(`[SYS] Found ${active.length} active bot configurations to restore connection.`);
+    for (const data of active) {
+      console.log(`[SYS] Reconnecting active session ID: ${data.id}`);
+      const inst = SessionManager.getOrCreateInstance(data.id);
+      bindBotEvents(data.id, inst);
+      inst.connect().catch(e => {
+        console.error(`[SYS] Failed to reconnect ${data.id}:`, e);
+      });
     }
   } catch (err) {
     console.error('[SYS] Failed to scan database active sessions:', err);
@@ -131,9 +147,8 @@ app.post('/api/sessions/stop', async (req, res) => {
       SessionManager.removeInstance(sessionId);
     }
     
-    // Reflect disconnected status directly in Firestore
-    const sessionRef = doc(db, 'sessions', sessionId);
-    await updateDoc(sessionRef, { status: 'Disconnected' });
+    // Refactored Database Status updates
+    await dbUpdateSessionFields(sessionId, { status: 'Disconnected' });
 
     res.json({ success: true, message: 'Bot session terminated.' });
   } catch (err: any) {
@@ -159,34 +174,21 @@ app.post('/api/sessions/wipe', async (req, res) => {
       SessionManager.removeInstance(sessionId);
     }
 
-    // Delete Firestore nested credentials
-    const credsDocRef = doc(db, 'sessions', sessionId, 'auth', 'creds');
-    await deleteDoc(credsDocRef).catch(() => {});
+    // Delete Postgres/file auth details
+    await deleteBaileysCreds(sessionId).catch(() => {});
+    await clearBaileysKeys(sessionId).catch(() => {});
+    await dbClearLogs(sessionId).catch(() => {});
 
-    // Delete keys subcollection keys
-    const keysColRef = collection(db, 'sessions', sessionId, 'keys');
-    const keysSnap = await getDocs(keysColRef).catch(() => null);
-    if (keysSnap) {
-      const deleteTasks = keysSnap.docs.map(doc => deleteDoc(doc.ref));
-      await Promise.all(deleteTasks);
-    }
-
-    // Clear logs subcollection
-    const logsColRef = collection(db, 'sessions', sessionId, 'logs');
-    const logsSnap = await getDocs(logsColRef).catch(() => null);
-    if (logsSnap) {
-      const deleteLogs = logsSnap.docs.map(doc => deleteDoc(doc.ref));
-      await Promise.all(deleteLogs);
-    }
-
-    // Reset status and stats on parent
-    const sessionRef = doc(db, 'sessions', sessionId);
-    await updateDoc(sessionRef, {
+    // Reset status and stats
+    await dbUpdateSessionFields(sessionId, {
       status: 'Disconnected',
       phoneNumber: '',
-      'stats.msgs': 0,
-      'stats.replies': 0,
-      'stats.cmds': 0
+      stats: {
+        msgs: 0,
+        replies: 0,
+        cmds: 0,
+        start: 0
+      }
     });
 
     res.json({ success: true, message: 'Session authentication tokens and cache cleared successfully.' });
@@ -195,7 +197,148 @@ app.post('/api/sessions/wipe', async (req, res) => {
   }
 });
 
-// Set up WebSocket server handshake
+// =======================================================
+// Supabase-Style Proxied REST APIs for Client Integration
+// =======================================================
+
+// User registration Endpoint
+app.post('/api/supabase/auth/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    res.status(400).json({ error: 'Username, email and password are required fields.' });
+    return;
+  }
+  try {
+    const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
+    const newUser = await registerUser(username, email, passwordHash);
+    res.json({ success: true, user: newUser });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// User sign-in Endpoint (supports standard users and root admin credentials)
+app.post('/api/supabase/auth/login', async (req, res) => {
+  const { emailOrUsername, password } = req.body;
+  if (!emailOrUsername || !password) {
+    res.status(400).json({ error: 'Email/Username and password are required fields.' });
+    return;
+  }
+  try {
+    const normalizedName = emailOrUsername.toLowerCase().trim();
+    if (normalizedName === ADMIN_USERNAME.toLowerCase() && password === ADMIN_PASSWORD) {
+      // Auto success login for root administrator
+      res.json({
+        success: true,
+        user: {
+          id: 'admin_root',
+          username: ADMIN_USERNAME,
+          email: 'haxtanx@nexuswa.com',
+          isAdmin: true
+        }
+      });
+      return;
+    }
+
+    const fetchedUser = await getUser(emailOrUsername);
+    if (!fetchedUser) {
+      res.status(401).json({ error: 'Authentication failed. Account not found.' });
+      return;
+    }
+
+    const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
+    if (fetchedUser.password_hash === passwordHash) {
+      res.json({
+        success: true,
+        user: {
+          id: fetchedUser.id,
+          username: fetchedUser.username,
+          email: fetchedUser.email,
+          isAdmin: fetchedUser.username === ADMIN_USERNAME
+        }
+      });
+    } else {
+      res.status(401).json({ error: 'Authentication failed. Password does not match.' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot config retrieval list
+app.get('/api/supabase/sessions', async (req, res) => {
+  const { ownerId } = req.query;
+  if (!ownerId) {
+    res.status(400).json({ error: 'Missing ownerId parameter' });
+    return;
+  }
+  try {
+    const sessions = await dbGetSessions(ownerId as string);
+    res.json({ success: true, sessions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot config profile storage
+app.post('/api/supabase/sessions/create', async (req, res) => {
+  const { session } = req.body;
+  if (!session || !session.id) {
+    res.status(400).json({ error: 'Invalid session profile configuration payload.' });
+    return;
+  }
+  try {
+    await dbSaveSession(session);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot config field updates
+app.post('/api/supabase/sessions/update', async (req, res) => {
+  const { sessionId, fields } = req.body;
+  if (!sessionId || !fields) {
+    res.status(400).json({ error: 'Missing sessionId or update fields payload.' });
+    return;
+  }
+  try {
+    await dbUpdateSessionFields(sessionId, fields);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot config deletion
+app.post('/api/supabase/sessions/delete', async (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    res.status(400).json({ error: 'Missing sessionId parameters.' });
+    return;
+  }
+  try {
+    await dbDeleteSession(sessionId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bot session logs retrieval
+app.get('/api/supabase/sessions/:id/logs', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const logs = await dbGetLogs(id, 50);
+    res.json({ success: true, logs });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =======================================================
+
+// Set up WebSocket server handshake to map browser screens
 wss.on('connection', (ws) => {
   let currSessionId: string | null = null;
 
@@ -239,7 +382,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Self Keep-Alive / Auto Ping loop (Every 5 minutes to maintain WebSockets and cold starts)
+// Self Keep-Alive / Auto Ping loop (Every 5 minutes to maintain WebSockets and avoid cold starts)
 function startAutoPingDaemon() {
   const hostUrl = process.env.APP_URL || 'http://localhost:3000/api/health';
   console.log(`[SYS] Initializing auto-ping warm loop targeting: ${hostUrl}`);
@@ -248,8 +391,8 @@ function startAutoPingDaemon() {
     try {
       console.log('[SYS] Sending auto-ping request to avoid system sleep cycles...');
       const response = await fetch(hostUrl);
-      const data = await response.json();
-      console.log(`[SYS] Self-ping returned: ${response.status} - `, data);
+      const data = await response.json().catch(() => ({ status: 'unknown_payload' }));
+      console.log(`[SYS] Self-ping returned status: ${response.status}`);
     } catch (err: any) {
       console.warn(`[SYS] Warm loop ping returned error: ${err.message}`);
     }
@@ -258,6 +401,9 @@ function startAutoPingDaemon() {
 
 // Integrate Vite's developer mode SPA proxying or Production builds
 async function startServer() {
+  // Initialize SQL schema tables or JSON databases
+  await initDb();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -265,7 +411,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.join(_dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -277,15 +423,16 @@ async function startServer() {
     console.log(`=========================================`);
     console.log(`  Fullstack WhatsApp Dashboard Active!`);
     console.log(`  Url: http://localhost:${PORT}`);
+    console.log(`  Targeting PORT 3000 ingress channel.`);
     console.log(`=========================================`);
     
-    // Fire up deamons
+    // Start active warm elements
     startAutoPingDaemon();
     autoStartActiveSessions();
   });
 }
 
-// Handle terminations
+// Handle termination signals cleanly
 const cleanShutdown = () => {
   console.log('[SYS] Shutting down Express server. Purging bot resources...');
   SessionManager.shutdownAll();

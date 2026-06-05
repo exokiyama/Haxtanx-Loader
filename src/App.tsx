@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { db, auth, handleFirestoreError, OperationType } from './lib/firebase';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot, setDoc, doc, addDoc } from 'firebase/firestore';
+import { supabase, SupabaseUser } from './lib/supabase';
 import { BotSession } from './types';
 import { AuthPanel } from './components/AuthPanel';
 import { ActiveSessionView } from './components/ActiveSessionView';
-import { Bot, LogOut, Plus, RefreshCw, KeyRound, ArrowRight, User as UserIcon, Power, ShieldCheck } from 'lucide-react';
+import { Bot, LogOut, Plus, ArrowRight, User as UserIcon, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [sessions, setSessions] = useState<BotSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -18,49 +16,43 @@ export default function App() {
   const [newBotId, setNewBotId] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // Monitor auth changes
+  // Monitor auth changes via our Supabase adaptor
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user || null);
       setAuthChecking(false);
       // Reset navigation state if they log out
-      if (!currentUser) {
+      if (!session?.user) {
         setSelectedSessionId(null);
         setSessions([]);
       }
     });
-    return unsub;
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Sync sessions collection from Firestore in real-time
+  // Sync sessions collection database layer in real-time (Polling every 3s keeps connection robust)
   useEffect(() => {
     if (!user) return;
 
-    const path = 'sessions';
-    const q = query(
-      collection(db, path),
-      where('ownerId', '==', user.uid)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const list: BotSession[] = [];
-        snapshot.forEach((docSnap) => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as BotSession);
-        });
-        setSessions(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, path);
+    const fetchSessions = async () => {
+      try {
+        const { data, error } = await supabase.from('sessions').select('*').eq('ownerId', user.id);
+        if (data) {
+          setSessions(data);
+        }
+      } catch (err) {
+        console.error('Failed to sync sessions from database:', err);
       }
-    );
+    };
 
-    return unsub;
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 3000);
+
+    return () => clearInterval(interval);
   }, [user]);
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
   };
 
   const handleCreateSession = async (e: React.FormEvent) => {
@@ -74,10 +66,10 @@ export default function App() {
     setCreating(true);
     try {
       const generatedId = newBotId.replace(/[^a-zA-Z0-9_\-]/g, '').trim() || 'bot_' + Math.random().toString(36).substring(2, 10);
-      const sessionDocRef = doc(db, 'sessions', generatedId);
 
-      const defaultPayload: Omit<BotSession, 'id'> = {
-        ownerId: user.uid,
+      const defaultPayload: BotSession = {
+        id: generatedId,
+        ownerId: user.id,
         name: newBotName.trim(),
         status: 'Disconnected',
         botMode: 'all',
@@ -87,6 +79,8 @@ export default function App() {
         stats: { msgs: 0, replies: 0, cmds: 0, start: Date.now() },
         allowedGroups: null,
         responseTexts: ['Hello! I am currently busy.'],
+        prefix: '%',
+        haterNames: [],
         owners: [],
         monitors: [],
         blocked: [],
@@ -96,14 +90,17 @@ export default function App() {
         createdAt: Date.now()
       };
 
-      await setDoc(sessionDocRef, defaultPayload);
+      const { error } = await supabase.from('sessions').insert(defaultPayload);
+      if (error) {
+        throw error;
+      }
       
       setNewBotName('');
       setNewBotId('');
       setShowCreateModal(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to register configuration profile.');
+      alert('Failed to register configuration profile: ' + err.message);
     } finally {
       setCreating(false);
     }
@@ -111,9 +108,9 @@ export default function App() {
 
   if (authChecking) {
     return (
-      <div className="min-h-screen bg-[#0A0A0A] flex flex-col justify-center items-center">
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col justify-center items-center select-none font-mono">
         <Bot className="w-10 h-10 text-[#25D366] animate-pulse mb-3" />
-        <p className="text-xs text-slate-505 tracking-wider">Acquiring sandbox claims credentials...</p>
+        <p className="text-xs text-slate-500 tracking-wider">Acquiring sandbox claims credentials...</p>
       </div>
     );
   }
@@ -139,8 +136,8 @@ export default function App() {
               <Bot className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-sm font-bold text-white tracking-tight h-full">HaxtanxWa</span>
-              <span className="text-[9px] uppercase font-bold text-[#25D366] bg-[#25D366]/10 px-1.5 py-0.5 rounded ml-2 border border-[#25D366]/25">Orchestrator v2.4</span>
+              <span className="text-sm font-bold text-white tracking-tight h-full">NexusWA</span>
+              <span className="text-[9px] uppercase font-bold text-[#25D366] bg-[#25D366]/10 px-1.5 py-0.5 rounded ml-2 border border-[#25D366]/25 font-mono">Orchestrator v2.4</span>
             </div>
           </div>
 
@@ -148,8 +145,8 @@ export default function App() {
             <div className="hidden sm:flex items-center gap-2 bg-[#0A0A0A] pl-3 pr-4 py-1.5 rounded-lg border border-[#262626]">
               <UserIcon className="w-3.5 h-3.5 text-slate-400" />
               <div>
-                <p className="text-[10px] font-bold text-slate-300 leading-none">
-                  {user.displayName || 'Sandbox Admin'}
+                <p className="text-[10px] font-bold text-slate-305 leading-none">
+                  {user.username || 'Sandbox Admin'}
                 </p>
                 <p className="text-[9px] text-slate-500 mt-0.5 max-w-[140px] truncate leading-none">
                   {user.email || 'developer_mode'}
@@ -159,7 +156,7 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="h-8 pr-3 pl-2 hover:bg-[#262626] rounded-lg text-slate-400 hover:text-red-405 flex items-center gap-1.5 text-xs font-semibold cursor-pointer transition-all"
+              className="h-8 pr-3 pl-2 hover:bg-[#262626] rounded-lg text-slate-400 hover:text-red-400 flex items-center gap-1.5 text-xs font-semibold cursor-pointer transition-all"
             >
               <LogOut className="w-3.5 h-3.5" /> Logout
             </button>
@@ -182,8 +179,8 @@ export default function App() {
             <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
               WhatsApp Bot Profiles Dashboard
             </h1>
-            <p className="text-xs text-gray-450 max-w-2xl leading-relaxed mb-6">
-              Create, provision, and authenticate micro-bot targets dynamically. Every instance operates standard Keep-Alive Warm polling loops and custom E2E key mappings inside Firestore automatically.
+            <p className="text-xs text-gray-400 max-w-2xl leading-relaxed mb-6 font-sans">
+              Create, provision, and authenticate micro-bot targets dynamically. Every instance operates standard Keep-Alive Warm polling loops and custom E2E key mappings inside Supabase database automatically.
             </p>
             <button
               onClick={() => setShowCreateModal(true)}
@@ -194,7 +191,7 @@ export default function App() {
           </div>
 
           {/* Sessions grid listing */}
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 select-none">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-550 mb-4 select-none font-mono">
             Active Bot Profiles ({sessions.length})
           </h2>
 
@@ -212,39 +209,39 @@ export default function App() {
                   <div>
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-[#0A0A0A] border border-[#262626] flex items-center justify-center text-slate-450 group-hover:text-[#25D366] transition-colors">
+                        <div className="w-8 h-8 rounded-lg bg-[#0A0A0A] border border-[#262626] flex items-center justify-center text-slate-400 group-hover:text-[#25D366] transition-colors">
                           <Bot className="w-4 h-4" />
                         </div>
                         <div>
                           <h3 className="text-sm font-bold text-white group-hover:text-[#25D366] transition-colors">
                             {sess.name}
                           </h3>
-                          <p className="text-[10px] text-zinc-500">ID: {sess.id}</p>
+                          <p className="text-[10px] text-zinc-500 font-mono">ID: {sess.id}</p>
                         </div>
                       </div>
 
                       <span className={`inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[10px] font-semibold ${
                         isOnline ? 'bg-[#25D366]/10 text-[#25D366] border border-[#25D366]/20' :
-                        isPending ? 'bg-blue-500/10 text-blue-400 border border-blue-500/25 animate-pulse' :
+                        isPending ? 'bg-blue-550/10 text-blue-400 border border-blue-550/25 animate-pulse' :
                         'bg-[#0A0A0A] text-zinc-500 border border-[#262626]'
                       }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-[#25D366]' : isPending ? 'bg-blue-400' : 'bg-slate-650'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-[#25D366]' : isPending ? 'bg-blue-400' : 'bg-slate-600'}`} />
                         {sess.status}
                       </span>
                     </div>
 
                     <div className="mt-4 grid grid-cols-3 gap-2 bg-[#0A0A0A]/40 p-2.5 rounded-lg border border-[#262626]">
-                      <div className="text-center">
-                        <p className="text-[9px] uppercase font-bold text-zinc-650">Seen</p>
-                        <p className="text-xs font-bold text-slate-350 mt-0.5">{sess.stats?.msgs || 0}</p>
+                      <div className="text-center font-mono">
+                        <p className="text-[9px] uppercase font-bold text-zinc-600">Seen</p>
+                        <p className="text-xs font-bold text-slate-300 mt-0.5">{sess.stats?.msgs || 0}</p>
                       </div>
-                      <div className="text-center border-x border-[#262626]">
-                        <p className="text-[9px] uppercase font-bold text-zinc-650">Replied</p>
-                        <p className="text-xs font-bold text-slate-350 mt-0.5">{sess.stats?.replies || 0}</p>
+                      <div className="text-center border-x border-[#262626] font-mono">
+                        <p className="text-[9px] uppercase font-bold text-zinc-600">Replied</p>
+                        <p className="text-xs font-bold text-slate-300 mt-0.5">{sess.stats?.replies || 0}</p>
                       </div>
-                      <div className="text-center">
-                        <p className="text-[9px] uppercase font-bold text-zinc-650">Mode</p>
-                        <p className="text-xs font-bold text-slate-350 mt-0.5 uppercase">{sess.botMode}</p>
+                      <div className="text-center font-mono">
+                        <p className="text-[9px] uppercase font-bold text-zinc-600">Mode</p>
+                        <p className="text-xs font-bold text-slate-300 mt-0.5 uppercase">{sess.botMode}</p>
                       </div>
                     </div>
                   </div>
@@ -264,7 +261,7 @@ export default function App() {
                 <Bot className="w-12 h-12 text-[#262626] animate-pulse mb-3" />
                 <h3 className="text-sm font-bold text-white mb-1">No Bot Configurations Found</h3>
                 <p className="text-xs text-gray-500 max-w-sm mb-4 leading-normal font-sans">
-                  Create your first WhatsApp bot configuration profile file inside firestore storage to trigger QR scanner sequences.
+                  Create your first WhatsApp bot configuration profile file inside database storage to trigger QR scanner sequences.
                 </p>
                 <button
                   onClick={() => setShowCreateModal(true)}
@@ -279,10 +276,10 @@ export default function App() {
         </div>
       )}
 
-      {/* 5. Create Profile Modal dialog */}
+      {/* Create Profile Modal dialog */}
       <AnimatePresence>
         {showCreateModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center p-4 z-50">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center p-4 z-50 select-none">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -292,13 +289,13 @@ export default function App() {
               <h3 className="text-md font-bold text-white mb-2 flex items-center gap-1.5">
                 🤖 Register Bot Profile
               </h3>
-              <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+              <p className="text-xs text-gray-500 mb-5 leading-relaxed font-sans">
                 Provide a friendly name for this instance and an optional specific ID target inside database collections.
               </p>
 
-              <form onSubmit={handleCreateSession} className="space-y-4 font-sans">
+              <form onSubmit={handleCreateSession} className="space-y-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-gray-500 tracking-wider mb-1.5">
+                  <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1.5 font-mono">
                     Bot Short Name
                   </label>
                   <input
@@ -312,7 +309,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-gray-500 tracking-wider mb-1.5">
+                  <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1.5 font-mono">
                     Profile custom ID (Optional)
                   </label>
                   <input
@@ -324,7 +321,7 @@ export default function App() {
                   />
                 </div>
 
-                <div className="flex justify-end gap-2.5 pt-4 border-t border-[#262626] mt-6">
+                <div className="flex justify-end gap-2.5 pt-4 border-t border-[#262626] mt-6 font-sans">
                   <button
                     type="button"
                     onClick={() => setShowCreateModal(false)}
