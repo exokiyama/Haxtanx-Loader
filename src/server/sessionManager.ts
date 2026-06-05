@@ -1,4 +1,4 @@
-import makeWASocket, {
+import pkgBaileys, {
   DisconnectReason,
   Browsers,
   fetchLatestBaileysVersion,
@@ -12,6 +12,11 @@ import makeWASocket, {
   proto,
   initAuthCreds
 } from '@whiskeysockets/baileys';
+
+// Robust dual ESM/CommonJS module interop resolution
+const makeWASocket = typeof (pkgBaileys as any).default === 'function'
+  ? (pkgBaileys as any).default
+  : (typeof pkgBaileys === 'function' ? pkgBaileys : (pkgBaileys as any).makeWASocket || pkgBaileys);
 import pino from 'pino';
 import {
   getSession,

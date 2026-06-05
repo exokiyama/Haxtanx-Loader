@@ -250,84 +250,174 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
         </div>
       )}
 
-      {/* 2. QR Code Pairing Screen (When connecting but offline) */}
-      {(sessionStatus === 'Connecting' || sessionStatus === 'Disconnected') && (wsQr || wsPairing) && (
-        <div className="bg-[#141414] border-2 border-dashed border-[#262626] rounded-xl p-8 mb-8 text-center flex flex-col items-center max-w-2xl mx-auto shadow-2xl relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-32 h-32 bg-[#25D366]/5 rounded-full blur-3xl pointer-events-none" />
+      {/* 2. QR Code Pairing Screen (When offline or connecting) */}
+      {(sessionStatus === 'Connecting' || sessionStatus === 'Disconnected') && (
+        <div className="bg-[#141414] border border-[#262626] rounded-xl p-8 mb-8 text-center flex flex-col items-center max-w-3xl mx-auto shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-48 h-48 bg-[#25D366]/5 rounded-full blur-3xl pointer-events-none" />
           
-          <h3 className="text-md font-bold text-white mb-2 flex items-center gap-1.5">
-            🔑 Sync WhatsApp Bot Session
+          <h3 className="text-base font-bold text-white mb-2 flex items-center justify-center gap-1.5 font-sans">
+            🔑 Establish WhatsApp Authentication Session
           </h3>
-          <p className="text-xs text-gray-400 max-w-md mb-6 leading-relaxed">
-            Scan the QR Code below using Linked Devices or request custom Pairing Code values to initialize the database E2E key handlers.
+          <p className="text-xs text-slate-400 max-w-lg mb-6 leading-relaxed">
+            Link this micro-tenant bot instance using standard End-to-End WebSocket handshakes. Choose between Instant QR Scan or CLI Phone Pairing Code PIN.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center w-full mt-2">
-            
-            {/* Method A: QR Scanning */}
-            {qrBlobUrl ? (
-              <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col items-center">
-                <span className="text-[10px] font-bold text-gray-500 tracking-wider mb-3 flex items-center gap-1">
-                  <Smartphone className="w-3.5 h-3.5 text-[#25D366]" /> METHOD A: SCAN QR
-                </span>
-                <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-800">
-                  <img src={qrBlobUrl} alt="WhatsApp QR Code" className="w-44 h-44 rounded-md select-none" />
-                </div>
-                <p className="text-[10px] text-gray-505 mt-3 text-center">
-                  Settings &rsaquo; Linked Devices &rsaquo; Link a Device
-                </p>
-              </div>
-            ) : (
-              <div className="bg-[#0A0A0A]/50 border border-[#262626]/50 p-10 rounded-xl text-gray-650 text-xs italic flex flex-col justify-center h-full">
-                QR Code Generation Pending...
-              </div>
-            )}
-
-            {/* Method B: Pairing Code Pin */}
-            <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col items-center h-full justify-between">
-              <span className="text-[10px] font-bold text-gray-500 tracking-wider mb-2 flex items-center gap-1">
-                <KeyRound className="w-3.5 h-3.5 text-pink-500" /> METHOD B: PAIRING CODE
-              </span>
-
-              {wsPairing ? (
-                <div className="flex flex-col items-center w-full py-4">
-                  <div className="bg-pink-500/5 border-2 border-pink-500/20 text-pink-400 font-mono text-xl font-extrabold px-6 py-3.5 tracking-widest rounded-xl flex items-center gap-2 relative group select-all">
-                    {wsPairing}
-                    <button
-                      onClick={handleCopyPairingCode}
-                      className="text-pink-500 hover:text-white p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
-                    >
-                      {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-gray-500 text-center mt-4 max-w-xs leading-normal">
-                    Enter this code on your phone notifications linking setup to authorize.
+          {sessionStatus === 'Connecting' && !wsQr && !wsPairing ? (
+            <div className="py-12 flex flex-col items-center justify-center">
+              <span className="w-8 h-8 border-3 border-[#25D366]/30 border-t-[#25D366] rounded-full animate-spin mb-4" />
+              <p className="text-xs text-[#25D366] font-semibold animate-pulse tracking-wide font-mono">
+                [SYS] COMPILING SECURE E2E KEY EXCHANGE STREAM...
+              </p>
+              <p className="text-[10px] text-gray-500 mt-1 max-w-xs">
+                Generating WhatsApp secure authorization handshakes on port 3000. This handles ephemeral database state caching and takes about 5-10 seconds.
+              </p>
+            </div>
+          ) : sessionStatus === 'Disconnected' && !wsQr && !wsPairing ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full mt-2 text-left">
+              
+              {/* Option A: QR Scanning */}
+              <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-[#25D366] tracking-wider mb-2 flex items-center gap-1 font-mono">
+                    <Smartphone className="w-3.5 h-3.5" /> OPTION A: INSTANT QR CODE
+                  </span>
+                  <h4 className="text-xs font-bold text-white mb-1.5">Scan with Linked Devices</h4>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Instantly load WhatsApp on your server by pointing your phone camera at the screen QR.
                   </p>
                 </div>
-              ) : (
-                <div className="w-full font-sans">
-                  <p className="text-[11px] text-gray-500 text-center leading-normal mb-3 max-w-xs mx-auto">
-                    To request single pairing pin key, enter phone target and start connection.
+                
+                <button
+                  onClick={handleStartBot}
+                  disabled={loading}
+                  className="w-full mt-6 py-2.5 bg-[#25D366] hover:bg-opacity-90 text-black text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {loading ? (
+                    <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Play className="w-3.5 h-3.5 fill-current" /> Spin up and Get QR
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Option B: Pairing Code PIN (CLI Pairing) */}
+              <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-pink-500 tracking-wider mb-2 flex items-center gap-1 font-mono">
+                    <KeyRound className="w-3.5 h-3.5" /> OPTION B: CLI / PHONE PAIRING
+                  </span>
+                  <h4 className="text-xs font-bold text-white mb-1.5">Pair with Mobile Number</h4>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Generate an 8-character terminal pairing PIN to authorize without scanning an active display screen.
                   </p>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-[9px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    Phone Number (With Country Code)
+                  </label>
                   <input
                     type="text"
                     placeholder="e.g. 923248974661"
                     value={pairPhone}
                     onChange={(e) => setPairPhone(e.target.value)}
-                    className="w-full text-center text-xs bg-[#141414] border border-[#262626] rounded-lg py-2 px-3 text-slate-200 outline-none mb-2"
+                    className="w-full h-9 px-3 bg-[#141414] border border-[#262626] rounded-md text-xs text-white placeholder:text-gray-650 outline-none focus:border-[#25D366] transition-colors"
                   />
+                  
                   <button
                     onClick={handleStartBot}
-                    disabled={loading}
-                    className="w-full py-2 bg-[#262626] hover:bg-pink-600 hover:text-white text-zinc-350 text-xs font-semibold rounded-lg transition-all cursor-pointer"
+                    disabled={loading || !pairPhone.trim()}
+                    className="w-full mt-3 py-2.5 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5"
                   >
-                    Generate Pin Key
+                    {loading ? (
+                      <span className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <KeyRound className="w-3.5 h-3.5" /> Spin up and Get CLI PIN
+                      </>
+                    )}
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
 
-          </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center w-full mt-2">
+              
+              {/* Left Side: QR Display */}
+              <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col items-center h-full justify-between">
+                <span className="text-[10px] font-bold text-gray-500 tracking-wider mb-3 flex items-center gap-1">
+                  <Smartphone className="w-3.5 h-3.5 text-[#25D366]" /> METHOD A: SCAN QR
+                </span>
+                
+                {qrBlobUrl ? (
+                  <div className="flex flex-col items-center">
+                    <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-800">
+                      <img src={qrBlobUrl} alt="WhatsApp QR Code" className="w-44 h-44 rounded-md select-none" />
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-3 text-center leading-normal">
+                      Settings &rsaquo; Linked Devices &rsaquo; Link a Device
+                    </p>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-[11px] text-gray-500 italic font-mono animate-pulse">
+                    No QR code requested or queued.
+                  </div>
+                )}
+              </div>
+
+              {/* Right Side: Pairing Code Display */}
+              <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col items-center h-full justify-between">
+                <span className="text-[10px] font-bold text-gray-500 tracking-wider mb-3 flex items-center gap-1">
+                  <KeyRound className="w-3.5 h-3.5 text-pink-500" /> METHOD B: PHONE PIN CODE
+                </span>
+
+                {wsPairing ? (
+                  <div className="flex flex-col items-center w-full py-2">
+                    <div className="bg-pink-500/5 border-2 border-pink-500/20 text-pink-400 font-mono text-xl font-extrabold px-6 py-3.5 tracking-widest rounded-xl flex items-center gap-2 relative group select-all">
+                      {wsPairing}
+                      <button
+                        onClick={handleCopyPairingCode}
+                        className="text-pink-500 hover:text-white p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-gray-500 text-center mt-3 max-w-xs leading-normal">
+                      Take this authentication key and paste it inside WhatsApp &rsaquo; Linked Devices link prompt.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="w-full font-sans text-center">
+                    <p className="text-[11px] text-gray-500 leading-normal mb-3 max-w-xs mx-auto">
+                      Need a temporary Pairing PIN? Supply your terminal target phone and click requesting.
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="e.g. 923248974661"
+                      value={pairPhone}
+                      onChange={(e) => setPairPhone(e.target.value)}
+                      className="w-full text-center text-xs bg-[#141414] border border-[#262626] rounded-lg py-2 px-3 text-slate-200 outline-none mb-2"
+                    />
+                    <button
+                      onClick={handleStartBot}
+                      disabled={loading || !pairPhone.trim()}
+                      className="w-full py-2 bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      {loading ? (
+                        <span className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        'Generate Pairing Code PIN'
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
 
         </div>
       )}
