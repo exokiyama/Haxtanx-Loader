@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "Session": {
+      "title": "WhatsApp Session",
+      "description": "WhatsApp Bot Session state and configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "botMode": { "type": "string" },
+        "botEnabled": { "type": "boolean" },
+        "processFromMe": { "type": "boolean" },
+        "delays": { "type": "object" },
+        "stats": { "type": "object" },
+        "allowedGroups": { "type": "array" },
+        "responseTexts": { "type": "array" },
+        "owners": { "type": "array" },
+        "monitors": { "type": "array" },
+        "blocked": { "type": "array" },
+        "muted": { "type": "array" },
+        "mentUsers": { "type": "array" },
+        "leakImages": { "type": "array" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["id", "ownerId", "name", "status"]
+    },
+    "AuthCreds": {
+      "title": "Session Auth Credentials",
+      "description": "Encrypted or serialized WhatsApp credentials",
+      "type": "object",
+      "properties": {
+        "data": { "type": "object" }
+      },
+      "required": ["data"]
+    },
+    "SignalKey": {
+      "title": "Signal Keys",
+      "description": "Serialized keys for Baileys E2E encryption handshakes",
+      "type": "object",
+      "properties": {
+        "val": { "type": "object" }
+      },
+      "required": ["val"]
+    },
+    "LogEntry": {
+      "title": "Session Log",
+      "description": "An interactive activity log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "level": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "level", "message"]
+    }
+  },
+  "firestore": {
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Root collection representing user WhatsApp bot sessions"
+    },
+    "/sessions/{sessionId}/auth/creds": {
+      "schema": "AuthCreds",
+      "description": "Credentials representation"
+    },
+    "/sessions/{sessionId}/keys/{keyId}": {
+      "schema": "SignalKey",
+      "description": "Individual Signal cryptographic key values"
+    },
+    "/sessions/{sessionId}/logs/{logId}": {
+      "schema": "LogEntry",
+      "description": "Rolling operational history for this WhatsApp session"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp Bot Manager",
+  "description": "Multi-tenant E2E WhatsApp Bot management panel and orchestrator with persistent Firestore credentials states, pairing streams, delay sliders, and logs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
