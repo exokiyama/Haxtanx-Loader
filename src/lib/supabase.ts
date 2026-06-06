@@ -82,21 +82,22 @@ class SupabaseAuthEmulation {
     }
   }
 
-  public async signInWithGoogle() {
+  public async signInWithGoogle(displayName = 'Google Partner', email = 'google_user@gmail.com') {
     try {
-      // Mock successful Google login sequence for the dashboard
-      const randomId = 'gUser_' + Math.random().toString(36).substring(2, 9);
-      const googleUser: SupabaseUser = {
-        id: randomId,
-        username: 'Google Partner',
-        email: 'google_user@gmail.com',
-        isAdmin: false
-      };
-      
-      this.currentUser = googleUser;
-      localStorage.setItem('nexus_wa_user', JSON.stringify(googleUser));
+      const res = await fetch('/api/supabase/auth/google-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: displayName, email })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { data: null, error: new Error(data.error || 'Google Authentication Failed') };
+      }
+
+      this.currentUser = data.user as SupabaseUser;
+      localStorage.setItem('nexus_wa_user', JSON.stringify(this.currentUser));
       this.notifyListeners('SIGNED_IN');
-      return { data: { user: googleUser }, error: null };
+      return { data: { user: this.currentUser }, error: null };
     } catch (err: any) {
       return { data: null, error: err };
     }

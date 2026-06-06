@@ -218,6 +218,45 @@ app.post('/api/supabase/auth/register', async (req, res) => {
   }
 });
 
+// Google sign-in/up dynamic endpoint
+app.post('/api/supabase/auth/google-login', async (req, res) => {
+  const { username, email } = req.body;
+  if (!email || !username) {
+    res.status(400).json({ error: 'Username and email are required fields.' });
+    return;
+  }
+  try {
+    const fetchedUser = await getUser(email);
+    if (fetchedUser) {
+      res.json({
+        success: true,
+        user: {
+          id: fetchedUser.id,
+          username: fetchedUser.username,
+          email: fetchedUser.email,
+          isAdmin: fetchedUser.username === ADMIN_USERNAME
+        }
+      });
+      return;
+    }
+
+    // Dynamic Google OAuth automatic registration in Postgres
+    const passwordHash = crypto.createHash('sha256').update('google_oauth_bypass_' + email).digest('hex');
+    const newUser = await registerUser(username, email, passwordHash);
+    res.json({
+      success: true,
+      user: {
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        isAdmin: false
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // User sign-in Endpoint (supports standard users and root admin credentials)
 app.post('/api/supabase/auth/login', async (req, res) => {
   const { emailOrUsername, password } = req.body;
@@ -338,6 +377,56 @@ app.get('/api/supabase/sessions/:id/logs', async (req, res) => {
 });
 
 // =======================================================
+// Templates Management APIs (.txt uploads)
+// =======================================================
+const TEMPLATE_FILE_PATHS: Record<string, string> = {
+  'hater.txt': path.join(process.cwd(), 'data', 'hater.txt'),
+  'lpc.txt': path.join(process.cwd(), 'data', 'lpc.txt'),
+  'mon.txt': path.join(process.cwd(), 'data', 'mon.txt'),
+  'ment.txt': path.join(process.cwd(), 'data', 'ment.txt'),
+  'htr.txt': path.join(process.cwd(), 'data', 'htr.txt')
+};
+
+app.get('/api/templates', (req, res) => {
+  try {
+    const response: Record<string, string> = {};
+    for (const [key, filePath] of Object.entries(TEMPLATE_FILE_PATHS)) {
+      if (fs.existsSync(filePath)) {
+        response[key] = fs.readFileSync(filePath, 'utf-8');
+      } else {
+        response[key] = '';
+      }
+    }
+    res.json({ success: true, templates: response });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/templates/upload', (req, res) => {
+  const { fileName, content } = req.body;
+  if (!fileName || content === undefined) {
+    res.status(400).json({ error: 'Missing fileName or content parameter' });
+    return;
+  }
+  const targetPath = TEMPLATE_FILE_PATHS[fileName];
+  if (!targetPath) {
+    res.status(400).json({ error: 'Invalid template file name' });
+    return;
+  }
+  try {
+    const parentDir = path.dirname(targetPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.writeFileSync(targetPath, content, 'utf-8');
+    res.json({ success: true, message: `${fileName} uploaded successfully.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =======================================================
 
 // Set up WebSocket server handshake to map browser screens
 wss.on('connection', (ws) => {
@@ -415,6 +504,11 @@ function startAutoPingDaemon() {
 async function startServer() {
   // Initialize SQL schema tables or JSON databases
   await initDb();
+
+  // Register the global event binder so websocket stream clients align automatically on spin-up
+  SessionManager.registerGlobalBinder((sessionId, inst) => {
+    bindBotEvents(sessionId, inst);
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

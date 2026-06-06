@@ -15,11 +15,17 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleGoogleSignIn = async () => {
+  // Google Accounts Interactive Modal state
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [customGoogleName, setCustomGoogleName] = useState('');
+  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
+
+  const handleGoogleSignIn = async (name: string, email: string) => {
     setLoading(true);
     setErrorMsg(null);
+    setShowGoogleModal(false);
     try {
-      const { error } = await supabase.auth.signInWithGoogle();
+      const { error } = await supabase.auth.signInWithGoogle(name, email);
       if (error) {
         setErrorMsg(error.message);
       }
@@ -219,11 +225,11 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
 
         <div className="space-y-3 mt-4">
           <button
-            onClick={handleGoogleSignIn}
+            onClick={() => setShowGoogleModal(true)}
             disabled={loading}
             className="w-full h-10 bg-white/5 border border-white/10 hover:bg-white/10 transition-all disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
           >
-            Sign In with Google Account
+            <Mail className="w-4 h-4 text-[#25D366]" /> Sign In with Google Account
           </button>
 
           <button
@@ -244,6 +250,93 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
         </div>
 
       </div>
+
+      {/* Google Accounts Selection Interactive Overlay Modal */}
+      {showGoogleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-[#141414] border border-[#262626] w-full max-w-sm rounded-xl p-6 shadow-2xl relative">
+            
+            {/* Google Logo Banner */}
+            <div className="flex flex-col items-center mb-5 text-center">
+              <div className="w-10 h-10 bg-[#4285F4]/10 rounded-full flex items-center justify-center mb-2.5">
+                <Sparkles className="w-5 h-5 text-[#4285F4]" />
+              </div>
+              <h2 className="text-base font-bold text-white font-sans">Choose Google Account</h2>
+              <p className="text-[10px] text-slate-400">to continue to NexusWA Loader Bot Panel</p>
+            </div>
+
+            {/* List of Mock/Developer Profiles */}
+            <div className="space-y-2 mb-4">
+              {[
+                { name: 'Daddy Hamza', email: 'hamza@nexuswa.com', desc: 'Main Administrator Account' },
+                { name: 'Sam Hax', email: 'samhaxofficial@gmail.com', desc: 'Lead Developer Account' },
+                { name: 'Eren Htr Owner', email: 'eren@nexuswa.com', desc: 'Target Monitor Partner' }
+              ].map((prof) => (
+                <button
+                  key={prof.email}
+                  type="button"
+                  onClick={() => handleGoogleSignIn(prof.name, prof.email)}
+                  className="w-full text-left p-3 rounded-lg bg-[#0A0A0A] border border-[#262626] hover:border-[#25D366] hover:bg-white/5 transition-all flex items-center gap-3 group cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-full bg-[#25D366]/10 text-[#25D366] flex items-center justify-center text-xs font-bold font-sans uppercase">
+                    {prof.name.slice(0, 2)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white group-hover:text-[#25D366] truncate">{prof.name}</p>
+                    <p className="text-[9px] text-slate-500 truncate">{prof.email}</p>
+                  </div>
+                  <div className="text-[8px] bg-white/5 px-1.5 py-0.5 rounded text-slate-400">
+                    {prof.desc}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Custom inputs */}
+            <div className="relative flex py-1.5 items-center mb-3">
+              <div className="flex-grow border-t border-[#262626]" />
+              <span className="flex-shrink mx-3 text-[8px] text-gray-500 uppercase tracking-widest font-semibold">Or use custom developer profile</span>
+              <div className="flex-grow border-t border-[#262626]" />
+            </div>
+
+            <div className="space-y-2.5 mb-5">
+              <input
+                type="text"
+                placeholder="Google Account Display Name"
+                value={customGoogleName}
+                onChange={(e) => setCustomGoogleName(e.target.value)}
+                className="w-full h-9 px-3 bg-[#0A0A0A] border border-[#262626] rounded-lg text-xs text-white focus:border-[#25D366] focus:outline-none transition-all placeholder:text-gray-600"
+              />
+              <input
+                type="email"
+                placeholder="Google Account Email"
+                value={customGoogleEmail}
+                onChange={(e) => setCustomGoogleEmail(e.target.value)}
+                className="w-full h-9 px-3 bg-[#0A0A0A] border border-[#262626] rounded-lg text-xs text-white focus:border-[#25D366] focus:outline-none transition-all placeholder:text-gray-600"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const targetName = customGoogleName.trim() || 'Custom Dev Partner';
+                  const targetEmail = customGoogleEmail.trim() || 'custom_dev@gmail.com';
+                  handleGoogleSignIn(targetName, targetEmail);
+                }}
+                className="w-full h-9 bg-[#25D366] hover:bg-opacity-95 text-black font-semibold text-xs rounded-lg transition-all active:scale-[0.98] cursor-pointer"
+              >
+                Authenticate Custom Profile
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowGoogleModal(false)}
+              className="w-full h-8 text-[11px] text-slate-400 hover:text-white transition-all cursor-pointer font-medium"
+            >
+              Cancel
+            </button>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };

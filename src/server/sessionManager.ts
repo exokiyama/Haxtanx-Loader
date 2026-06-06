@@ -29,7 +29,8 @@ import {
   deleteBaileysKey,
   clearBaileysKeys,
   addLog as dbAddLog,
-  getLogs as dbGetLogs
+  getLogs as dbGetLogs,
+  getAllActiveSessions
 } from './db.js';
 
 // Mock DB wrapper to mimic firestore interface so we don't have to rewrite 1000 lines of existing code
@@ -94,6 +95,8 @@ if (!fs.existsSync(DATA_DIR)) {
 const HATER_FILE_PATH = path.join(DATA_DIR, 'hater.txt');
 const LPC_FILE_PATH = path.join(DATA_DIR, 'lpc.txt');
 const MON_FILE_PATH = path.join(DATA_DIR, 'mon.txt');
+const MENT_FILE_PATH = path.join(DATA_DIR, 'ment.txt');
+const HTR_FILE_PATH = path.join(DATA_DIR, 'htr.txt');
 
 function ensureDataFiles() {
   if (!fs.existsSync(HATER_FILE_PATH)) {
@@ -121,6 +124,21 @@ function ensureDataFiles() {
       "🛡️ Monitored Activity Detected. Daddy Hamza is keeping an eye on your status.",
       "⚠️ Alert! This chat is being live-logged by Haxtanx Loader V1.",
       "🤖 Your action has been synced down to our database triggers securely."
+    ].join('\n') + '\n', 'utf-8');
+  }
+  if (!fs.existsSync(MENT_FILE_PATH)) {
+    fs.writeFileSync(MENT_FILE_PATH, [
+      "🛡️ Alert! Please review WhatsApp bot configurations.",
+      "⚠️ Urgent notice: Server execution state is active.",
+      "🤖 Status Ping: Bot triggers are monitoring activity."
+    ].join('\n') + '\n', 'utf-8');
+  }
+  if (!fs.existsSync(HTR_FILE_PATH)) {
+    fs.writeFileSync(HTR_FILE_PATH, [
+      "is that your best shot? try harder!",
+      "you have absolutely zero speed. get lost!",
+      "shut up and listen to your developer daddy!",
+      "not even worth wasting my words on you."
     ].join('\n') + '\n', 'utf-8');
   }
 }
@@ -248,6 +266,9 @@ export class WhatsAppBotInstance {
   private isLpcRunning = false;
   private lpcTimer: NodeJS.Timeout | null = null;
   private lpcTargets: string[] = [];
+
+  // Temp Spammer active state timers mapped by Chat Jid
+  private tempIntervals = new Map<string, NodeJS.Timeout>();
 
   // Event Callbacks
   private onQRCallback: ((qr: string) => void) | null = null;
@@ -505,6 +526,61 @@ export class WhatsAppBotInstance {
       return;
     }
 
+    // HTR (Hater Target Responder) check
+    if (config.htrTargets && config.htrTargets.includes(senderPhone)) {
+      const isSticker = getContentType(msg.message) === 'stickerMessage' || !!msg.message?.stickerMessage;
+      let replyText = '';
+
+      if (isSticker) {
+        const responses = ["sticker piyara hai", "sticker ab mera hua", "sticker bohot cute hai", "sticker steal kr rha hu"];
+        replyText = responses[Math.floor(Math.random() * responses.length)];
+      } else if (text === '..') {
+        const responses = ["huh", "what", "what do u want", "bolna kya chahte ho?", "kya kaam hai?"];
+        replyText = responses[Math.floor(Math.random() * responses.length)];
+      } else if (text && /^\d+$/.test(text.replace(/[\s-().]/g, ''))) {
+        const responses = ["number ka kya krna", "numbers ka kya kam", "ginti q suna rhe ho?", "mje maths ni ati"];
+        replyText = responses[Math.floor(Math.random() * responses.length)];
+      } else {
+        const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+        if (wordCount >= 2) {
+          const htrLines = readLinesFromFile(HTR_FILE_PATH);
+          const rawText = htrLines.length > 0 
+            ? htrLines[Math.floor(Math.random() * htrLines.length)] 
+            : 'yooo bro';
+          
+          const emojis = ['😂', '🔥', '👀', '🤫', '💀', '🤡', '🤖', '🤪', '🤬', '👏', '👻', '👑', '👿', '🛡️'];
+          const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+          const hname = config.hname || '';
+          const namePart = hname ? hname + ' ' : '';
+          replyText = `${namePart}${rawText} ${randomEmoji}`;
+        }
+      }
+
+      if (replyText) {
+        try {
+          const delaysSec = [1, 2, 3];
+          const chosenDelay = config.delays?.htr || delaysSec[Math.floor(Math.random() * delaysSec.length)];
+          
+          await this.sock.sendPresenceUpdate('composing', from).catch(() => {});
+          await delay(chosenDelay * 1000);
+          
+          await this.sock.sendMessage(from, { 
+            text: replyText,
+            mentions: [senderNorm]
+          }, { quoted: msg });
+
+          const sessionRef = doc(db, 'sessions', this.sessionId);
+          await updateDoc(sessionRef, { 'stats.replies': config.stats.replies + 1 }).catch(() => {});
+          await this.addLog('success', `[HTR] Replied to target user +${senderPhone} (delay ${chosenDelay}s): "${replyText}"`);
+        } catch (err: any) {
+          await this.addLog('error', `HTR reply failed: ${err.message}`);
+        } finally {
+          await this.sock.sendPresenceUpdate('paused', from).catch(() => {});
+        }
+        return;
+      }
+    }
+
     // Self-monitor check
     if (config.monitors && config.monitors.includes(senderPhone)) {
       if (text && !/[a-zA-Z]/.test(text)) return;
@@ -603,8 +679,10 @@ export class WhatsAppBotInstance {
       await this.addLog('error', `Hax loop error: ${err.message}`);
     }
 
-    const delays = [9000, 12000, 15000];
-    const delayMs = delays[Math.floor(Math.random() * delays.length)];
+    const defaultDelays = [9000, 12000, 15000];
+    const delayMs = config.delays?.hax 
+      ? (config.delays.hax * 1000) 
+      : defaultDelays[Math.floor(Math.random() * defaultDelays.length)];
     
     this.haxTimer = setTimeout(async () => {
       const sessionRef = doc(db, 'sessions', this.sessionId);
@@ -654,8 +732,10 @@ export class WhatsAppBotInstance {
       await this.addLog('error', `LPC loop error: ${err.message}`);
     }
 
-    const delays = [8000, 10000, 12000];
-    const delayMs = delays[Math.floor(Math.random() * delays.length)];
+    const defaultLpcDelays = [8000, 10000, 12000];
+    const delayMs = config.delays?.lpc 
+      ? (config.delays.lpc * 1000) 
+      : defaultLpcDelays[Math.floor(Math.random() * defaultLpcDelays.length)];
 
     this.lpcTimer = setTimeout(async () => {
       const sessionRef = doc(db, 'sessions', this.sessionId);
@@ -695,8 +775,107 @@ export class WhatsAppBotInstance {
         await reply('🏓 Pong! Dashboard WhatsApp session is active and responsive.');
         break;
 
+      case 'addbot': {
+        const isMain = config.owners?.includes(senderPhone) || senderPhone === config.phoneNumber;
+        const isHamza = senderPhone === '923012345678' || senderPhone === '923078440536' || senderPhone === '923000867825'; // Fallback admin numbers
+        
+        if (!isMain && !isHamza) {
+          return reply('❌ Unauthorized: Only the main administrator can provision new WhatsApp bot nodes.');
+        }
+
+        const rawPhone = args[1]?.trim();
+        const phone = rawPhone?.replace(/\D/g, '');
+        if (!phone || phone.length < 10 || phone.length > 15) {
+          return reply(`❌ Usage: ${prefix}addbot 92XXXXXXXXXX (Include country code, no + or spaces)`);
+        }
+
+        const activeSessions = SessionManager.getActiveSessionIds();
+        const nextIndex = activeSessions.length + 1;
+        const newId = `Bot_${nextIndex}_${Math.random().toString(36).substring(2, 6)}`;
+
+        await reply(`⏳ [ Initializing ${newId.replace('_', ' ')}... ]`);
+
+        const newSessionPayload: BotSession = {
+          id: newId,
+          ownerId: config.ownerId || 'admin_root',
+          name: `WhatsApp Node ${nextIndex}`,
+          phoneNumber: phone,
+          status: 'Connecting',
+          botEnabled: true,
+          botMode: 'all',
+          processFromMe: false,
+          delays: {
+            ment: 10,
+            leak: 30,
+            hax: 12,
+            lpc: 10,
+            htr: 2,
+            temp: 5
+          },
+          stats: {
+            msgs: 0,
+            replies: 0,
+            cmds: 0,
+            start: Date.now()
+          },
+          allowedGroups: [],
+          responseTexts: [
+            "🛡️ Monitored Activity Detected. Daddy Hamza is keeping an eye on your status.",
+            "⚡ NexusWA Engine v1 running at peak latency response speed.",
+            "⚙️ Systems diagnostics checked. Connection secure."
+          ],
+          owners: config.owners || [senderPhone],
+          monitors: [],
+          blocked: [],
+          muted: [],
+          mentUsers: [],
+          leakImages: [],
+          prefix: '%',
+          haterNames: [],
+          hname: 'Eren',
+          hrtext: 'yooo bro',
+          htrEnabled: false,
+          htrTargets: [],
+          tempTexts: [],
+          createdAt: Date.now()
+        };
+
+        // Save session setup persistently inside database (PostgreSQL/Supabase or JSON fallback)
+        await saveSession(newSessionPayload);
+
+        // Spawn instance and trigger auto-connection in pairing mode
+        const newSession = SessionManager.getOrCreateInstance(newId);
+        newSession.connect(phone);
+
+        // Fetch pairing code and reply gracefully after a brief delay
+        setTimeout(async () => {
+          try {
+            let pairingCode = newSession.pairingCode;
+            if (!pairingCode) {
+              pairingCode = await newSession.sock.requestPairingCode(phone);
+              newSession.pairingCode = pairingCode;
+            }
+            
+            await reply(`╔════════════════════════╗\n` +
+                        `    🛰️  𝐍𝐎𝐃𝐄  𝐀𝐂𝐓𝐈𝐕𝐀𝐓𝐄🇩\n` +
+                        `╚════════════════════════╝\n` +
+                        `┃ 🆔 𝐍𝐚𝐦𝐞: ${newId.replace('_', ' ')}\n` +
+                        `┃ 📱 𝐍𝐮𝐦: ${phone}\n` +
+                        `┃ 🔑 𝐂𝐨𝐝𝐞: *${pairingCode}*\n` +
+                        `╚════════════════════════╝`);
+            
+            // Re-save session status state as Connecting
+            await updateSessionFields(newId, { status: 'Connecting' }).catch(() => {});
+          } catch (e: any) {
+            await reply(`❌ Failure generating pairing: ${e.message}. Launch bot via panel.`);
+          }
+        }, 5000);
+        break;
+      }
+
       case 'help': {
         const activePrefix = config.prefix || '%';
+        const watermark = getRandomWatermark();
         const helpText = `╔══════════════════════════╗\n` +
           `   👑  *𝙉𝙀开𝙐𝙎𝙒𝘼 𝙇𝙊𝘼𝘿𝙀𝙍 𝘽𝙊𝙏*  👑   \n` +
           `      *𝖣𝖤𝖖𝖤𝖫𝖮𝖯𝖤𝖣 𝖡𝖸 𝖣𝖠𝖣𝖣𝖸 𝖧𝖠𝖬𝖹𝖠*       \n` +
@@ -706,8 +885,9 @@ export class WhatsAppBotInstance {
           `◽ \`${activePrefix}help\` - Displays this guide\n` +
           `◽ \`${activePrefix}ping\` - Check live handshake latency\n` +
           `◽ \`${activePrefix}pre <char>\` - Change prefix (e.g. \`${activePrefix}pre !\`)\n` +
-          `◽ \`${activePrefix}stats\` - View session logs & metrics\n\n` +
-          `👑 *👤 𝙊𝙒𝙉𝙀𝙍𝙎𝙃𝙄𝙋:*\n` +
+          `◽ \`${activePrefix}stats\` - View session logs & metrics\n` +
+          `◽ \`${activePrefix}set del <type> <seconds>\` - Set latency delay for [ment|hax|lpc|leak|htr|temp]\n\n` +
+          `👑 *👤 𝙊𝙦𝙉𝙀𝙍𝙎𝙃𝙄𝙋:*\n` +
           `◽ \`${activePrefix}owners\` - Show registered bot owners\n` +
           `◽ \`${activePrefix}addowner <phone>\` - Add new admin owner\n` +
           `◽ \`${activePrefix}removeowner <phone>\` - Remove owner\n\n` +
@@ -723,24 +903,38 @@ export class WhatsAppBotInstance {
           `◽ \`${activePrefix}unblock <phone>\` - Unblock a number\n` +
           `◽ \`${activePrefix}mute\` - Enable reply trackers (tag user)\n` +
           `◽ \`${activePrefix}unmute\` - Deactivate reply tracking\n\n` +
-          `👿 *🔥 𝙃𝘼𝙏𝙀𝙍 𝙎𝙋𝘼𝙈𝙈𝙀𝙍 (𝙗𝙖𝙘𝙠𝙜𝙧𝙤𝙪𝙣𝙙):*\n` +
+          `👿 *🔥 𝙃𝘼𝙏𝙀𝙍 𝙎𝙋𝘼𝙈𝙈𝙀规𝙍 (𝙗𝙖𝙘𝙠𝙜𝙧𝙤𝙪𝙣𝙙):*\n` +
           `◽ \`hax start\` / \`${activePrefix}hax start\` - Boot fast hater loops (9s/12s/15s)\n` +
           `◽ \`stop hax\` / \`${activePrefix}hax stop\` - Shutdown hater loops\n` +
-          `◽ \`${activePrefix}addtext <text>\` - Append spam inside hater.txt\n` +
-          `◽ \`${activePrefix}rmtext <text>\` - Remove spam from hater.txt\n` +
+          `◽ \`${activePrefix}addhatxt <text>\` - Append line inside hater.txt\n` +
+          `◽ \`${activePrefix}rmhatxt <text>\` - Remove line from hater.txt\n` +
+          `◽ \`${activePrefix}addtext <text>\` - (Legacy) Append hater line\n` +
           `◽ \`${activePrefix}addhater <name>\` - Register user name in haters DB\n` +
           `◽ \`${activePrefix}rmhater <name>\` - Wipe hater name from DB\n` +
-          `◽ \`${activePrefix}haters\` - Show all tracked haters database\n\n` +
+          `◽ \`${activePrefix}haters\` - Show haters database\n\n` +
+          `👿 *🔑 𝙃𝙏𝙍 (𝙃𝘼𝙏𝙀𝙍 𝙏𝘼𝙍𝙂𝙀𝙏 𝙍𝙀𝙎𝙋𝙊𝙉𝘿𝙀𝙍):*\n` +
+          `◽ \`${activePrefix}add htr <phone_or_reply>\` - Auto-tag & reply to this hater number\n` +
+          `◽ \`${activePrefix}rm htr <phone_or_reply>\` - Remove number from HTR auto-reply list\n` +
+          `◽ \`${activePrefix}add hname <name>\` - Set hater target response prefix title\n` +
+          `◽ \`${activePrefix}add hrtext <text>\` - Append custom response text inside htr.txt\n\n` +
           `⚔️ *💥 𝙇𝙋𝘾 𝙎𝙋𝘼𝙈𝙈𝙀𝙍 (𝙗𝙖𝙘𝙠𝙜𝙧𝙤𝙪𝙣𝙙):*\n` +
-          `◽ \`.lpc @user\` - Initialize pings with tags from lpc.txt (8s/10s/12s)\n` +
-          `◽ \`stop lpc\` / \`stopall\` - Stop LPC spamming instantly\n\n` +
+          `◽ \`.lpc @user\` - Initialize pings with tags from lpc.txt\n` +
+          `◽ \`stop lpc\` / \`stopall\` - Stop LPC spamming instantly\n` +
+          `◽ \`${activePrefix}add lptxt <text>\` - Append line inside lpc.txt\n` +
+          `◽ \`${activePrefix}rm lptxt <text>\` - Remove line from lpc.txt\n\n` +
+          `🎯 *🔥 𝙏𝙀𝙈𝙋 𝙎𝙋𝘼𝙈𝙈𝙀𝙍 (𝙗𝙖𝙘𝙠𝙜𝙧𝙤𝙪𝙣𝙙):*\n` +
+          `◽ \`${activePrefix}temp add <text>\` - Register new spam template\n` +
+          `◽ \`${activePrefix}temp start\` - Blast registered templates on delay (5s)\n` +
+          `◽ \`${activePrefix}temp stop\` - Stop active temp loop in this chat\n` +
+          `◽ \`${activePrefix}temp clear\` - Clear active templates database\n\n` +
           `🖼️ *🎞️ 𝙇𝙀𝘼𝙆 & 𝙂𝙍𝙊𝙐𝙋𝙎:*\n` +
           `◽ \`${activePrefix}leak [start|stop]\` - Looping images + texts\n` +
           `◽ \`${activePrefix}ment [start|stop]\` - Regular loop group tags\n` +
-          `◽ \`${activePrefix}join <group-link>\` - Join group via invite URL\n` +
+          `◽ \`${activePrefix}join <group-link>\` - Join group via URL\n` +
           `◽ \`${activePrefix}left\` - Exit current group immediately\n` +
-          `◽ \`${activePrefix}nuke\` - Absolute secure groups wipeout\n\n` +
-          `💻 _Full synchronization provided in real-time by NexusWA Cloud panel!_`;
+          `◽ \`${activePrefix}nuke\` - Groups wipeout\n\n` +
+          `💻 _Cloud Synchronization Panel:_ https://ai.studio/build\n\n` +
+          `${watermark}`;
         await reply(helpText);
         break;
       }
@@ -1141,7 +1335,7 @@ export class WhatsAppBotInstance {
               const pick = imgs[Math.floor(Math.random() * imgs.length)];
               await this.sock.sendMessage(chatJid, {
                 image: { url: pick.url },
-                caption: pick.text
+                caption: `${pick.text}\n\n${getRandomWatermark()}`
               });
             } catch (e: any) {
               await this.addLog('error', `Leak loop failed: ${e.message}`);
@@ -1183,10 +1377,14 @@ export class WhatsAppBotInstance {
               const users = config.mentUsers || [];
               const pickUser = users[Math.floor(Math.random() * users.length)];
               const targetJid = pickUser + '@s.whatsapp.net';
-              const randomText = this.getRandomText(config);
+              
+              const mentLines = readLinesFromFile(MENT_FILE_PATH);
+              const randomText = mentLines.length > 0 
+                ? mentLines[Math.floor(Math.random() * mentLines.length)] 
+                : this.getRandomText(config);
               
               await this.sock.sendMessage(chatJid, {
-                text: randomText,
+                text: `${randomText}\n\n${getRandomWatermark()}`,
                 mentions: [targetJid]
               });
             } catch (e: any) {
@@ -1204,6 +1402,191 @@ export class WhatsAppBotInstance {
           await reply('✅ Ment ping loop halted.');
         } else {
           await reply(`🎯 *Ment Command Guide*:\nUsage: ${prefix} ment [start|stop]\nConfigure target list directly in your Cloud UI!`);
+        }
+        break;
+      }
+
+      case 'set': {
+        const sub = args[1]?.toLowerCase();
+        if (sub === 'del') {
+          const type = args[2]?.toLowerCase();
+          const secsStr = args[3];
+          const secs = parseInt(secsStr, 10);
+          
+          const allowedTypes = ['ment', 'hax', 'lpc', 'leak', 'htr', 'temp'];
+          if (!type || !allowedTypes.includes(type) || isNaN(secs) || secs <= 0) {
+            return reply(`❌ Usage: ${prefix}set del [ment|hax|lpc|leak|htr|temp] [seconds]\nExample: ${prefix}set del htr 2`);
+          }
+          
+          const updatedDelays = {
+            ...(config.delays || {}),
+            [type]: secs
+          };
+          await updateDoc(sessionRef, { delays: updatedDelays });
+          await reply(`✅ Delay for *${type}* is now set to *${secs}s*!`);
+        } else {
+          await reply(`❌ Unknown set sub-command. Usage: ${prefix}set del [type] [seconds]`);
+        }
+        break;
+      }
+
+      case 'add': {
+        const sub = args[1]?.toLowerCase();
+        const content = args.slice(2).join(' ').trim();
+        
+        if (sub === 'lptxt') {
+          if (!content) return reply(`❌ Usage: ${prefix}add lptxt [text]`);
+          const resolved = content.replace(/\\n/g, '\n');
+          try {
+            fs.appendFileSync(LPC_FILE_PATH, resolved + '\n', 'utf-8');
+            await reply('✅ Text successfully appended inside lpc.txt file!');
+          } catch (e: any) {
+            await reply(`❌ Failed to append: ${e.message}`);
+          }
+        } else if (sub === 'hatxt') {
+          if (!content) return reply(`❌ Usage: ${prefix}add hatxt [text]`);
+          const resolved = content.replace(/\\n/g, '\n');
+          try {
+            fs.appendFileSync(HATER_FILE_PATH, resolved + '\n', 'utf-8');
+            await reply('✅ Text successfully appended inside hater.txt file!');
+          } catch (e: any) {
+            await reply(`❌ Failed to append: ${e.message}`);
+          }
+        } else if (sub === 'htr') {
+          const rawPhone = content.replace(/\D/g, '');
+          let phone = rawPhone;
+          if (!phone) {
+            const quotedSender = msg.message?.extendedTextMessage?.contextInfo?.participant;
+            const parsedMentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            if (quotedSender) {
+              phone = quotedSender.split('@')[0];
+            } else if (parsedMentions.length > 0) {
+              phone = parsedMentions[0].split('@')[0];
+            }
+          }
+          if (!phone) return reply(`❌ Specify phone target number or reply to user message to add as HTR target.`);
+          const updated = Array.from(new Set([...(config.htrTargets || []), phone]));
+          await updateDoc(sessionRef, { htrTargets: updated });
+          await reply(`✅ Added +${phone} to the HTR (Hater Target Responder) list.`);
+        } else if (sub === 'hname') {
+          if (!content) return reply(`❌ Usage: ${prefix}add hname [name]`);
+          await updateDoc(sessionRef, { hname: content });
+          await reply(`✅ HTR Hname set to *${content}*.`);
+        } else if (sub === 'hrtext') {
+          if (!content) return reply(`❌ Usage: ${prefix}add hrtext [text]`);
+          await updateDoc(sessionRef, { hrtext: content });
+          try {
+            fs.appendFileSync(HTR_FILE_PATH, content + '\n', 'utf-8');
+          } catch {}
+          await reply(`✅ HTR response text set and synced to htr.txt.`);
+        } else {
+          await reply(`❌ Unknown add command. Options: lptxt, hatxt, htr, hname, hrtext`);
+        }
+        break;
+      }
+      
+      case 'rm': {
+        const sub = args[1]?.toLowerCase();
+        const content = args.slice(2).join(' ').trim();
+        
+        if (sub === 'lptxt') {
+          if (!content) return reply(`❌ Specify EXACT text line to remove from lpc.txt.`);
+          try {
+            const lines = readLinesFromFile(LPC_FILE_PATH);
+            const filtered = lines.filter(l => l !== content);
+            fs.writeFileSync(LPC_FILE_PATH, filtered.join('\n') + '\n', 'utf-8');
+            await reply('✅ Cleaned line from lpc.txt!');
+          } catch (e: any) {
+            await reply(`❌ Failed: ${e.message}`);
+          }
+        } else if (sub === 'hatxt') {
+          if (!content) return reply(`❌ Specify EXACT text line to remove from hater.txt.`);
+          try {
+            const lines = readLinesFromFile(HATER_FILE_PATH);
+            const filtered = lines.filter(l => l !== content);
+            fs.writeFileSync(HATER_FILE_PATH, filtered.join('\n') + '\n', 'utf-8');
+            await reply('✅ Cleaned line from hater.txt!');
+          } catch (e: any) {
+            await reply(`❌ Failed: ${e.message}`);
+          }
+        } else if (sub === 'htr') {
+          let phone = content.replace(/\D/g, '');
+          if (!phone) {
+            const quotedSender = msg.message?.extendedTextMessage?.contextInfo?.participant;
+            const parsedMentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            if (quotedSender) {
+              phone = quotedSender.split('@')[0];
+            } else if (parsedMentions.length > 0) {
+              phone = parsedMentions[0].split('@')[0];
+            }
+          }
+          if (!phone) return reply(`❌ Specify phone target number or reply to user message to remove from HTR list.`);
+          const updated = (config.htrTargets || []).filter(h => h !== phone);
+          await updateDoc(sessionRef, { htrTargets: updated });
+          await reply(`✅ Removed +${phone} from HTR targets.`);
+        } else if (sub === 'temp') {
+          await updateDoc(sessionRef, { tempTexts: [] });
+          await reply('✅ Temporary templates list cleared.');
+        } else {
+          await reply(`❌ Unknown remove command. Options: lptxt, hatxt, htr, temp`);
+        }
+        break;
+      }
+
+      case 'temp': {
+        const action = args[1]?.toLowerCase();
+        const content = args.slice(2).join(' ').trim();
+        
+        if (action === 'add') {
+          if (!content) return reply(`❌ Usage: ${prefix}temp add [text]`);
+          const templates = config.tempTexts || [];
+          templates.push(content);
+          await updateDoc(sessionRef, { tempTexts: templates });
+          await reply(`✅ Added template. Total active templates: ${templates.length}`);
+        } else if (action === 'start') {
+          const templates = config.tempTexts || [];
+          if (templates.length === 0) {
+            return reply(`❌ Temporary templates list is empty! Please add a template using \`${prefix}temp add <text>\`.`);
+          }
+          if (this.tempIntervals.has(chatJid)) {
+            return reply('⚠️ Temporary Spammer is already active in this chat.');
+          }
+          
+          const delaySec = config.delays?.temp || 5;
+          const interval = setInterval(async () => {
+            if (!this.isConnected) {
+              const timer = this.tempIntervals.get(chatJid);
+              if (timer) clearInterval(timer);
+              this.tempIntervals.delete(chatJid);
+              return;
+            }
+            try {
+              const activeTemplates = config.tempTexts || [];
+              if (activeTemplates.length === 0) return;
+              const pickText = activeTemplates[Math.floor(Math.random() * activeTemplates.length)];
+              const textToSend = `${pickText}\n\n${getRandomWatermark()}`;
+              await this.sock.sendMessage(chatJid, { text: textToSend });
+            } catch (err: any) {
+              await this.addLog('error', `Temp Spammer error: ${err.message}`);
+            }
+          }, delaySec * 1000);
+          
+          this.tempIntervals.set(chatJid, interval);
+          await reply(`✅ *TEMP SPAM INITIALIZED* - Blasting templates list on every ${delaySec}s in this chat.`);
+        } else if (action === 'stop') {
+          const interval = this.tempIntervals.get(chatJid);
+          if (interval) {
+            clearInterval(interval);
+            this.tempIntervals.delete(chatJid);
+            await reply('✅ Stopped temp spammer loop in this chat.');
+          } else {
+            await reply('❌ Temporary Spammer is not active in this chat.');
+          }
+        } else if (action === 'rm' || action === 'clear') {
+          await updateDoc(sessionRef, { tempTexts: [] });
+          await reply('✅ Temporary templates list cleared.');
+        } else {
+          await reply(`🎯 *Temp Spammer Guide*:\nUsage: ${prefix}temp [add|start|stop|clear]\nExample: ${prefix}temp add Eren is back!`);
         }
         break;
       }
@@ -1228,6 +1611,18 @@ export class WhatsAppBotInstance {
       clearInterval(this.mentInterval);
       this.mentInterval = null;
     }
+    if (this.haxTimer) {
+      clearTimeout(this.haxTimer);
+      this.haxTimer = null;
+    }
+    if (this.lpcTimer) {
+      clearTimeout(this.lpcTimer);
+      this.lpcTimer = null;
+    }
+    for (const interval of this.tempIntervals.values()) {
+      clearInterval(interval);
+    }
+    this.tempIntervals.clear();
     
     this.leakChats.clear();
     this.mentChats.clear();
@@ -1249,12 +1644,45 @@ export class WhatsAppBotInstance {
 // Master Session Manager Map
 class WhatsAppSessionManager {
   private activeInstances = new Map<string, WhatsAppBotInstance>();
+  private globalBinder: ((sessionId: string, inst: WhatsAppBotInstance) => void) | null = null;
+
+  constructor() {
+    // Background Supervisor Loop: checks every 45 seconds to keep all active bots "always connected"
+    setInterval(async () => {
+      try {
+        const active = await getAllActiveSessions();
+        for (const data of active) {
+          const inst = this.getOrCreateInstance(data.id);
+          // If marked active/connected but not connected in-memory, auto-wake it up
+          if (!inst.isConnected && data.status !== 'Disconnected') {
+            console.log(`[Supervisor] Bot node ${data.id} (+${data.phoneNumber}) is offline but marked ${data.status}. Spawining auto-reconnect...`);
+            inst.connect().catch((err) => {
+              console.error(`[Supervisor] Auto-reconnect failed for ${data.id}:`, err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[Supervisor] Keep-alive daemon error:', err);
+      }
+    }, 45000);
+  }
+
+  public registerGlobalBinder(binder: (sessionId: string, inst: WhatsAppBotInstance) => void) {
+    this.globalBinder = binder;
+  }
 
   public getOrCreateInstance(sessionId: string): WhatsAppBotInstance {
     let inst = this.activeInstances.get(sessionId);
     if (!inst) {
       inst = new WhatsAppBotInstance(sessionId);
       this.activeInstances.set(sessionId, inst);
+      if (this.globalBinder) {
+        try {
+          this.globalBinder(sessionId, inst);
+        } catch (err) {
+          console.error(`[SessionManager] Fail to bind events for ${sessionId} during creation:`, err);
+        }
+      }
     }
     return inst;
   }

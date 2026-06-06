@@ -13,6 +13,10 @@ export interface BotStats {
 export interface BotDelays {
   ment: number;
   leak: number;
+  hax?: number;
+  lpc?: number;
+  htr?: number;
+  temp?: number;
 }
 
 export interface LeakImage {
@@ -51,6 +55,11 @@ export interface BotSession {
   leakImages: LeakImage[];
   prefix?: string;
   haterNames?: string[];
+  hname?: string;
+  hrtext?: string;
+  htrEnabled?: boolean;
+  htrTargets?: string[];
+  tempTexts?: string[];
   createdAt: number;
 }
 

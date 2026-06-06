@@ -3,6 +3,7 @@ import { BotSession, LogEntry } from '../types';
 import { BotConfigPanel } from './BotConfigPanel';
 import { LogTerminal } from './LogTerminal';
 import { BotStatsWidget } from './BotStatsWidget';
+import { TemplateFilesManager } from './TemplateFilesManager';
 import { supabase } from '../lib/supabase';
 import { LogOut, Play, Square, RefreshCcw, Wifi, WifiOff, RefreshCw, KeyRound, Smartphone, Layers, AlertCircle, Copy, Check } from 'lucide-react';
 
@@ -453,6 +454,9 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
         </div>
 
       </div>
+
+      {/* 5. Txt Templates File Manager */}
+      <TemplateFilesManager />
 
     </div>
   );

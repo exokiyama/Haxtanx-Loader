@@ -18,6 +18,9 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
   // Ment targets
   const [newMentUser, setNewMentUser] = useState('');
 
+  // HTR targets
+  const [newHtrTarget, setNewHtrTarget] = useState('');
+
   // Leak images (Unlimited)
   const [leakImgUrl, setLeakImgUrl] = useState('');
   const [leakImgCaption, setLeakImgCaption] = useState('');
@@ -25,6 +28,14 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
   // Custom delay sliders
   const [mentDelay, setMentDelay] = useState(session.delays?.ment || 10);
   const [leakDelay, setLeakDelay] = useState(session.delays?.leak || 30);
+  const [haxDelay, setHaxDelay] = useState(session.delays?.hax || 12);
+  const [lpcDelay, setLpcDelay] = useState(session.delays?.lpc || 10);
+  const [htrDelay, setHtrDelay] = useState(session.delays?.htr || 2);
+  const [tempDelay, setTempDelay] = useState(session.delays?.temp || 5);
+
+  // HTR Parameters
+  const [hname, setHname] = useState(session.hname || 'Eren');
+  const [hrtext, setHrtext] = useState(session.hrtext || 'yooo bro');
 
   const updateFields = async (fields: Partial<BotSession>) => {
     try {
@@ -83,9 +94,21 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
     await updateFields({
       delays: {
         ment: Number(mentDelay),
-        leak: Number(leakDelay)
+        leak: Number(leakDelay),
+        hax: Number(haxDelay),
+        lpc: Number(lpcDelay),
+        htr: Number(htrDelay),
+        temp: Number(tempDelay)
       }
     });
+  };
+
+  const handleSaveHtrInfo = async () => {
+    await updateFields({
+      hname: hname.trim(),
+      hrtext: hrtext.trim()
+    });
+    alert('HTR parameters saved successfully.');
   };
 
   return (
@@ -135,11 +158,119 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
                 />
               </div>
 
+              <div>
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>Hax Spammer Loop Delay: <strong className="text-amber-400">{haxDelay}s</strong></span>
+                  <span>Min: 2s / Max: 60s</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="2" 
+                  max="60"
+                  value={haxDelay}
+                  onChange={(e) => setHaxDelay(Number(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-800 rounded-lg cursor-pointer accent-amber-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>LPC Mentions Loop Delay: <strong className="text-violet-400">{lpcDelay}s</strong></span>
+                  <span>Min: 2s / Max: 60s</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="2" 
+                  max="60"
+                  value={lpcDelay}
+                  onChange={(e) => setLpcDelay(Number(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-800 rounded-lg cursor-pointer accent-violet-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                    <span>HTR Response Delay: <strong className="text-rose-400">{htrDelay}s</strong></span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="15"
+                    value={htrDelay}
+                    onChange={(e) => setHtrDelay(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg cursor-pointer accent-rose-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                    <span>Temp Spammer Delay: <strong className="text-emerald-400">{tempDelay}s</strong></span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="30"
+                    value={tempDelay}
+                    onChange={(e) => setTempDelay(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg cursor-pointer accent-emerald-500"
+                  />
+                </div>
+              </div>
+
               <button
                 onClick={handleSaveDelays}
                 className="w-full mt-2 py-2 px-3 bg-[#25D366] hover:bg-opacity-90 text-xs font-bold text-black rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
               >
                 <Save className="w-3 h-3" /> Save Timers and Apply to Active Bot
+              </button>
+            </div>
+          </div>
+
+          {/* HTR (Hater-Target-Responder) Parameters */}
+          <div className="bg-[#0D0D0D] p-4 rounded-lg border border-[#262626]">
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="text-xs font-semibold text-slate-305 uppercase tracking-wider flex items-center gap-1">
+                🔪 HTR Responder Parameters
+              </h4>
+              <button
+                onClick={() => updateFields({ htrEnabled: !session.htrEnabled })}
+                className={`py-0.5 px-2.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${
+                  session.htrEnabled ? 'bg-rose-500/10 text-rose-450 border border-rose-500/30' : 'bg-[#0A0A0A] text-zinc-500 border border-[#262626]'
+                }`}
+              >
+                {session.htrEnabled ? '● HTR ACTIVE' : '● HTR DISABLED'}
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-mono text-zinc-500 uppercase tracking-wide mb-1">Hater Display Name (hname)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Eren"
+                  value={hname}
+                  onChange={(e) => setHname(e.target.value)}
+                  className="w-full text-xs bg-[#0A0A0A] border border-[#262626] rounded-lg py-1.5 px-3 text-slate-200 outline-none focus:border-red-500/50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-zinc-500 uppercase tracking-wide mb-1">Random Default Responder Text (hrtext)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. yooo bro"
+                  value={hrtext}
+                  onChange={(e) => setHrtext(e.target.value)}
+                  className="w-full text-xs bg-[#0A0A0A] border border-[#262626] rounded-lg py-1.5 px-3 text-slate-200 outline-none focus:border-red-500/50"
+                />
+              </div>
+
+              <button
+                onClick={handleSaveHtrInfo}
+                className="w-full py-1.5 px-3 bg-rose-900/30 hover:bg-rose-900/50 text-rose-400 hover:text-white border border-rose-500/20 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
+              >
+                <Save className="w-3.5 h-3.5" /> Save HTR Settings
               </button>
             </div>
           </div>
@@ -478,6 +609,39 @@ export const BotConfigPanel: React.FC<BotConfigPanelProps> = ({ session }) => {
                   <button onClick={() => handleRemoveItem('muted', i)} className="text-zinc-500 font-bold hover:text-red-500 cursor-pointer">&times;</button>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* HTR Targets block */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-rose-455 mb-2 flex items-center gap-1">
+              🔪 HTR Targeted Numbers ({session.htrTargets?.length || 0})
+            </label>
+            <div className="flex gap-2 mb-2">
+              <input
+                type="text"
+                placeholder="Target Phone (e.g. 923012345678)"
+                value={newHtrTarget}
+                onChange={(e) => setNewHtrTarget(e.target.value)}
+                className="flex-1 text-xs bg-[#0A0A0A] border border-[#262626] rounded-lg py-1.5 px-3 text-slate-200 outline-none focus:border-rose-500/50"
+              />
+              <button
+                onClick={() => handleAddItem('htrTargets', newHtrTarget, setNewHtrTarget)}
+                className="bg-[#262626] text-[#E5E5E5] hover:bg-zinc-800 px-3 py-1 bg-none rounded text-xs font-semibold cursor-pointer"
+              >
+                Add
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto scrollbar-hide">
+              {session.htrTargets?.map((item, i) => (
+                <div key={i} className="text-[11px] bg-[#0A0A0A] text-slate-300 border border-[#262626] px-2 py-0.5 rounded flex items-center gap-1">
+                  +{item}
+                  <button onClick={() => handleRemoveItem('htrTargets', i)} className="text-zinc-400 hover:text-rose-500 font-bold cursor-pointer">&times;</button>
+                </div>
+              ))}
+              {(!session.htrTargets || session.htrTargets.length === 0) && (
+                <p className="text-[10px] text-zinc-500 italic">No HTR targets added. Tag them using .add htr from WhatsApp or enter above.</p>
+              )}
             </div>
           </div>
 
