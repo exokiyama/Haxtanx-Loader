@@ -253,6 +253,8 @@ export class WhatsAppBotInstance {
   public qrCode: string | null = null;
   public pairingCode: string | null = null;
   public isConnected = false;
+  public isConnecting = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   
   // Local active loop state timers
   private leakInterval: NodeJS.Timeout | null = null;
@@ -315,6 +317,35 @@ export class WhatsAppBotInstance {
   }
 
   public async connect(phoneNumberToPair?: string) {
+    if (this.isConnected) {
+      await this.addLog('info', 'Already connected to WhatsApp. Redundant start skipped.');
+      return;
+    }
+    if (this.isConnecting) {
+      await this.addLog('info', 'Connection handshake already in progress. Redundant start skipped.');
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    this.isConnecting = true;
+
+    // Clean up any existing socket & listeners prior to connect to prevent multi-ws race conditions
+    if (this.sock) {
+      try {
+        this.sock.ev.removeAllListeners('connection.update');
+        this.sock.ev.removeAllListeners('creds.update');
+        this.sock.ev.removeAllListeners('messages.upsert');
+        this.sock.end(undefined);
+      } catch (err) {
+        console.warn('[Session] Cleanup existing socket warn:', err);
+      }
+      this.sock = null;
+    }
+
     try {
       await this.addLog('sys', 'Initializing custom database credentials framework...');
       const { state, saveCreds } = await useFirestoreAuthState(this.sessionId);
@@ -364,6 +395,11 @@ export class WhatsAppBotInstance {
           this.qrCode = null;
           this.pairingCode = null;
           this.isConnected = true;
+          this.isConnecting = false;
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
           const botNum = this.sock.user?.id?.split('@')[0];
 
           // Set status and save back
@@ -380,6 +416,7 @@ export class WhatsAppBotInstance {
         }
 
         if (connection === 'connecting') {
+          this.isConnecting = true;
           if (this.onStatusCallback) this.onStatusCallback('Connecting');
           const sessionRef = doc(db, 'sessions', this.sessionId);
           await updateDoc(sessionRef, { status: 'Connecting' }).catch(() => {});
@@ -388,6 +425,7 @@ export class WhatsAppBotInstance {
 
         if (connection === 'close') {
           this.isConnected = false;
+          this.isConnecting = false;
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           let reason = `Disconnection (Code: ${statusCode})`;
           
@@ -407,8 +445,12 @@ export class WhatsAppBotInstance {
           await this.addLog('warn', `Session disconnected: ${reason}. Scheduling retry loop...`);
           
           // Exponential backoff reconnect
-          setTimeout(() => {
-            if (!this.isConnected) {
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+          }
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            if (!this.isConnected && !this.isConnecting) {
               this.connect(phoneNumberToPair);
             }
           }, 5000);
@@ -423,6 +465,8 @@ export class WhatsAppBotInstance {
       });
 
     } catch (err: any) {
+      this.isConnected = false;
+      this.isConnecting = false;
       await this.addLog('error', `Connection workflow crash: ${err.message}`);
       if (this.onStatusCallback) this.onStatusCallback('Error', err.message);
       const sessionRef = doc(db, 'sessions', this.sessionId);
@@ -1653,8 +1697,8 @@ class WhatsAppSessionManager {
         const active = await getAllActiveSessions();
         for (const data of active) {
           const inst = this.getOrCreateInstance(data.id);
-          // If marked active/connected but not connected in-memory, auto-wake it up
-          if (!inst.isConnected && data.status !== 'Disconnected') {
+          // If marked active/connected but not connected in-memory and not currently connecting, auto-wake it up
+          if (!inst.isConnected && !inst.isConnecting && data.status !== 'Disconnected') {
             console.log(`[Supervisor] Bot node ${data.id} (+${data.phoneNumber}) is offline but marked ${data.status}. Spawining auto-reconnect...`);
             inst.connect().catch((err) => {
               console.error(`[Supervisor] Auto-reconnect failed for ${data.id}:`, err);
