@@ -265,6 +265,11 @@ export class WhatsAppBotInstance {
   public isConnecting = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   
+  // Exponential backoff and recovery state
+  private reconnectAttempts = 0;
+  private haxChatJid: string | null = null;
+  private lpcChatJid: string | null = null;
+
   // Local active loop state timers
   private leakInterval: NodeJS.Timeout | null = null;
   private mentInterval: NodeJS.Timeout | null = null;
@@ -405,6 +410,7 @@ export class WhatsAppBotInstance {
           this.pairingCode = null;
           this.isConnected = true;
           this.isConnecting = false;
+          this.reconnectAttempts = 0; // Reset exponential backoff attempts upon successful connection
           if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -422,6 +428,11 @@ export class WhatsAppBotInstance {
             phoneNumber: botNum,
             'stats.start': Date.now()
           }).catch(() => {});
+
+          // Trigger restoration list of background loops (temp, leak, ment, lpc, hax, htr) from state
+          this.recoverActiveLoops().catch((err) => {
+            console.error(`[StateRecovery] recoverActiveLoops failed:`, err);
+          });
         }
 
         if (connection === 'connecting') {
@@ -440,6 +451,7 @@ export class WhatsAppBotInstance {
           
           if (statusCode === DisconnectReason.loggedOut) {
             reason = 'Logged out. Session credentials cleared.';
+            this.reconnectAttempts = 0;
             if (this.onStatusCallback) this.onStatusCallback('Disconnected', reason);
             const sessionRef = doc(db, 'sessions', this.sessionId);
             await updateDoc(sessionRef, { status: 'Disconnected', errorReason: reason }).catch(() => {});
@@ -448,26 +460,32 @@ export class WhatsAppBotInstance {
             return;
           }
 
-          // FIX: Handling 515 (restartRequired) separately to avoid offline DB states and warnings
+          // FIX: Handling 515 (restartRequired) with exponential backoff to avoid aggressive reconnect loops
           if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
-            await this.addLog('info', 'WhatsApp requested hot restart (Code 515). Reconnecting immediately...');
+            const delayMs = Math.min(Math.pow(2, this.reconnectAttempts) * 5000 + Math.floor(Math.random() * 2000), 180000);
+            this.reconnectAttempts++;
+            await this.addLog('info', `WhatsApp requested hot restart (Code 515). Backing off exponentially, reconnecting in ${Math.round(delayMs / 1000)}s...`);
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = setTimeout(() => {
               this.reconnectTimer = null;
               if (!this.isConnected && !this.isConnecting) {
                 this.connect(phoneNumberToPair);
               }
-            }, 500);
+            }, delayMs);
             return;
           }
 
-          // FIX: Handling 440 (connectionReplaced) with long delay to stop "rolling deployment fight loops" on Railway
+          // FIX: Handling 440 (connectionReplaced) with exponential backoff to stop "rolling deployment fight loops" on Railway
           if (statusCode === DisconnectReason.connectionReplaced || statusCode === 440) {
             reason = 'Connection replaced by another active session or deployment.';
             if (this.onStatusCallback) this.onStatusCallback('Disconnected', reason);
             const sessionRef = doc(db, 'sessions', this.sessionId);
             await updateDoc(sessionRef, { status: 'Disconnected', errorReason: reason }).catch(() => {});
-            await this.addLog('warn', 'Session replaced (Code 440). Delaying reconnect by 90 seconds to allow the other instance to comfortably run...');
+
+            // For 440, we start with a higher base (30 seconds) to let other instances safely take precedence
+            const delayMs = Math.min(Math.pow(2, this.reconnectAttempts) * 30000 + Math.floor(Math.random() * 5000), 180000);
+            this.reconnectAttempts++;
+            await this.addLog('warn', `Session replaced (Code 440). Backing off exponentially, reconnecting in ${Math.round(delayMs / 1000)}s...`);
             
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = setTimeout(() => {
@@ -475,16 +493,19 @@ export class WhatsAppBotInstance {
               if (!this.isConnected && !this.isConnecting) {
                 this.connect(phoneNumberToPair);
               }
-            }, 90000); // 90 seconds delay to let old containers shutdown calmly on Railway
+            }, delayMs);
             return;
           }
 
           if (this.onStatusCallback) this.onStatusCallback('Disconnected', reason);
           const sessionRef = doc(db, 'sessions', this.sessionId);
           await updateDoc(sessionRef, { status: 'Disconnected', errorReason: reason }).catch(() => {});
-          await this.addLog('warn', `Session disconnected: ${reason}. Scheduling retry loop...`);
           
-          // Exponential backoff reconnect
+          // Exponential backoff reconnect for other general disconnect reasons
+          const delayMs = Math.min(Math.pow(2, this.reconnectAttempts) * 5000 + Math.floor(Math.random() * 2000), 180000);
+          this.reconnectAttempts++;
+          await this.addLog('warn', `Session disconnected: ${reason}. Backing off exponentially, reconnecting in ${Math.round(delayMs / 1000)}s...`);
+          
           if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
           }
@@ -493,7 +514,7 @@ export class WhatsAppBotInstance {
             if (!this.isConnected && !this.isConnecting) {
               this.connect(phoneNumberToPair);
             }
-          }, 5000);
+          }, delayMs);
         }
       });
 
@@ -1141,14 +1162,18 @@ export class WhatsAppBotInstance {
         if (action === 'start') {
           if (this.isHaxRunning) return reply('⚠️ [Hax Alert] Spammer loop already booted and running!');
           this.isHaxRunning = true;
+          this.haxChatJid = chatJid;
+          await this.persistActiveLoopsState();
           this.runHaxSpam(chatJid, config);
           await reply('👿 *HAX ATTACK BOOTED* - Running hater spam sequences targeting haters list (9s/12s/15s delay).');
         } else if (action === 'stop') {
           this.isHaxRunning = false;
+          this.haxChatJid = null;
           if (this.haxTimer) {
             clearTimeout(this.haxTimer);
             this.haxTimer = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ Hax spam loop has been terminated.');
         } else {
           await reply(`👿 *Hax Spammer Guide*:\nUsage: \`hax start\` or \`hax stop\`\nManage targets with %addhater <name> and %haters commands.`);
@@ -1160,25 +1185,32 @@ export class WhatsAppBotInstance {
         const target = args[1]?.toLowerCase();
         if (target === 'hax') {
           this.isHaxRunning = false;
+          this.haxChatJid = null;
           if (this.haxTimer) {
             clearTimeout(this.haxTimer);
             this.haxTimer = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ Hax spam loop has been terminated.');
         } else if (target === 'lpc' || target === 'all') {
           this.isLpcRunning = false;
+          this.lpcChatJid = null;
           this.lpcTargets = [];
           if (this.lpcTimer) {
             clearTimeout(this.lpcTimer);
             this.lpcTimer = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ LPC spam loops halted.');
         } else {
           this.isHaxRunning = false;
+          this.haxChatJid = null;
           this.isLpcRunning = false;
+          this.lpcChatJid = null;
           this.lpcTargets = [];
           if (this.haxTimer) { clearTimeout(this.haxTimer); this.haxTimer = null; }
           if (this.lpcTimer) { clearTimeout(this.lpcTimer); this.lpcTimer = null; }
+          await this.persistActiveLoopsState();
           await reply('🛡️ All active background spamming systems successfully shutdown.');
         }
         break;
@@ -1186,18 +1218,23 @@ export class WhatsAppBotInstance {
 
       case 'stopall': {
         this.isHaxRunning = false;
+        this.haxChatJid = null;
         this.isLpcRunning = false;
+        this.lpcChatJid = null;
         this.lpcTargets = [];
         if (this.haxTimer) { clearTimeout(this.haxTimer); this.haxTimer = null; }
         if (this.lpcTimer) { clearTimeout(this.lpcTimer); this.lpcTimer = null; }
+        await this.persistActiveLoopsState();
         await reply('🛡️ All active background spamming systems successfully shutdown.');
         break;
       }
 
       case 'stoplpc': {
         this.isLpcRunning = false;
+        this.lpcChatJid = null;
         this.lpcTargets = [];
         if (this.lpcTimer) { clearTimeout(this.lpcTimer); this.lpcTimer = null; }
+        await this.persistActiveLoopsState();
         await reply('✅ LPC spam loops halted.');
         break;
       }
@@ -1206,11 +1243,13 @@ export class WhatsAppBotInstance {
         const action = args[1]?.toLowerCase();
         if (action === 'stop') {
           this.isLpcRunning = false;
+          this.lpcChatJid = null;
           this.lpcTargets = [];
           if (this.lpcTimer) {
             clearTimeout(this.lpcTimer);
             this.lpcTimer = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ LPC spam loops halted.');
           break;
         }
@@ -1231,7 +1270,9 @@ export class WhatsAppBotInstance {
         }
 
         this.isLpcRunning = true;
+        this.lpcChatJid = chatJid;
         this.lpcTargets = Jids;
+        await this.persistActiveLoopsState();
         this.runLpcSpam(chatJid, config);
         await reply(`⚔️ *LPC ATTACK SHIFTED* - Flooding targeted tags (${Jids.length} users) with dynamic pings (8s/10s/12s delay).`);
         break;
@@ -1406,6 +1447,7 @@ export class WhatsAppBotInstance {
             return reply('⚠️ Leak cascade already running in this chat.');
           }
           this.leakChats.add(chatJid);
+          await this.persistActiveLoopsState();
           
           const intervalMs = (config.delays?.leak || 30) * 1000;
           this.leakInterval = setInterval(async () => {
@@ -1433,6 +1475,7 @@ export class WhatsAppBotInstance {
             clearInterval(this.leakInterval);
             this.leakInterval = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ Leak cascade terminated in this chat.');
         } else {
           await reply(`🖼️ *Leak Command Guide*:\nUsage: ${prefix} leak [start|stop]\nEdit leak targets and list on the Dashboard!`);
@@ -1450,6 +1493,7 @@ export class WhatsAppBotInstance {
             return reply('❌ Target reference mentions list is empty. Set it via the Web GUI first.');
           }
           this.mentChats.add(chatJid);
+          await this.persistActiveLoopsState();
           
           const intervalMs = (config.delays?.ment || 10) * 1000;
           this.mentInterval = setInterval(async () => {
@@ -1483,6 +1527,7 @@ export class WhatsAppBotInstance {
             clearInterval(this.mentInterval);
             this.mentInterval = null;
           }
+          await this.persistActiveLoopsState();
           await reply('✅ Ment ping loop halted.');
         } else {
           await reply(`🎯 *Ment Command Guide*:\nUsage: ${prefix} ment [start|stop]\nConfigure target list directly in your Cloud UI!`);
@@ -1656,12 +1701,14 @@ export class WhatsAppBotInstance {
           }, delaySec * 1000);
           
           this.tempIntervals.set(chatJid, interval);
+          await this.persistActiveLoopsState();
           await reply(`✅ *TEMP SPAM INITIALIZED* - Blasting templates list on every ${delaySec}s in this chat.`);
         } else if (action === 'stop') {
           const interval = this.tempIntervals.get(chatJid);
           if (interval) {
             clearInterval(interval);
             this.tempIntervals.delete(chatJid);
+            await this.persistActiveLoopsState();
             await reply('✅ Stopped temp spammer loop in this chat.');
           } else {
             await reply('❌ Temporary Spammer is not active in this chat.');
@@ -1722,6 +1769,164 @@ export class WhatsAppBotInstance {
       this.onStatusCallback('Disconnected');
     }
     this.addLog('sys', 'Bot session terminated.');
+  }
+
+  private async persistActiveLoopsState() {
+    try {
+      const activeLoops = {
+        haxChats: this.isHaxRunning && this.haxChatJid ? [this.haxChatJid] : [],
+        lpcChats: this.isLpcRunning && this.lpcChatJid ? [{ chatJid: this.lpcChatJid, targets: this.lpcTargets }] : [],
+        leakChats: Array.from(this.leakChats),
+        mentChats: Array.from(this.mentChats),
+        tempChats: Array.from(this.tempIntervals.keys()).map(chatJid => ({
+          chatJid,
+          texts: []
+        }))
+      };
+      const sessionRef = doc(db, 'sessions', this.sessionId);
+      await updateDoc(sessionRef, { activeLoops }).catch(() => {});
+    } catch (err: any) {
+      console.error(`[StateRecovery] Failed to save active loops state: ${err.message}`);
+    }
+  }
+
+  private async recoverActiveLoops() {
+    try {
+      const sessionRef = doc(db, 'sessions', this.sessionId);
+      const snap = await getDoc(sessionRef);
+      if (!snap.exists()) return;
+      const config = snap.data() as BotSession;
+      const state = (config as any).activeLoops;
+      if (!state) return;
+
+      await this.addLog('info', 'Recovering active background loops from status database...');
+
+      // 1. Recover Hax loop
+      if (state.haxChats && state.haxChats.length > 0) {
+        for (const chatJid of state.haxChats) {
+          if (!this.isHaxRunning) {
+            this.isHaxRunning = true;
+            this.haxChatJid = chatJid;
+            await this.addLog('info', `Resuming Hax spam loop in chat ${chatJid}...`);
+            this.runHaxSpam(chatJid, config);
+          }
+        }
+      }
+
+      // 2. Recover LPC loop
+      if (state.lpcChats && state.lpcChats.length > 0) {
+        for (const lco of state.lpcChats) {
+          if (!this.isLpcRunning) {
+            this.isLpcRunning = true;
+            this.lpcChatJid = lco.chatJid;
+            this.lpcTargets = lco.targets || [];
+            await this.addLog('info', `Resuming LPC spam loop in chat ${lco.chatJid} targeting ${this.lpcTargets.length} users...`);
+            this.runLpcSpam(lco.chatJid, config);
+          }
+        }
+      }
+
+      // 3. Recover Leak loop
+      if (state.leakChats && state.leakChats.length > 0) {
+        for (const chatJid of state.leakChats) {
+          if (!this.leakChats.has(chatJid)) {
+            this.leakChats.add(chatJid);
+            await this.addLog('info', `Resuming Leak cascade loop in chat ${chatJid}...`);
+            
+            if (this.leakInterval) clearInterval(this.leakInterval);
+            const intervalMs = (config.delays?.leak || 30) * 1000;
+            this.leakInterval = setInterval(async () => {
+              if (!this.isConnected || !this.leakChats.has(chatJid)) {
+                if (this.leakInterval) clearInterval(this.leakInterval);
+                return;
+              }
+              try {
+                const imgs = config.leakImages || [];
+                if (imgs.length === 0) return;
+                const pick = imgs[Math.floor(Math.random() * imgs.length)];
+                await this.sock.sendMessage(chatJid, {
+                  image: { url: pick.url },
+                  caption: `${pick.text}\n\n${getRandomWatermark()}`
+                });
+              } catch (e: any) {
+                await this.addLog('error', `Leak loop failed: ${e.message}`);
+              }
+            }, intervalMs);
+          }
+        }
+      }
+
+      // 4. Recover Ment loop
+      if (state.mentChats && state.mentChats.length > 0) {
+        for (const chatJid of state.mentChats) {
+          if (!this.mentChats.has(chatJid)) {
+            this.mentChats.add(chatJid);
+            await this.addLog('info', `Resuming Ment ping loop in chat ${chatJid}...`);
+            
+            if (this.mentInterval) clearInterval(this.mentInterval);
+            const intervalMs = (config.delays?.ment || 10) * 1000;
+            this.mentInterval = setInterval(async () => {
+              if (!this.isConnected || !this.mentChats.has(chatJid)) {
+                if (this.mentInterval) clearInterval(this.mentInterval);
+                return;
+              }
+              try {
+                const users = config.mentUsers || [];
+                const pickUser = users[Math.floor(Math.random() * users.length)];
+                const targetJid = pickUser + '@s.whatsapp.net';
+                
+                const mentLines = readLinesFromFile(MENT_FILE_PATH);
+                const randomText = mentLines.length > 0 
+                  ? mentLines[Math.floor(Math.random() * mentLines.length)] 
+                  : this.getRandomText(config);
+                
+                await this.sock.sendMessage(chatJid, {
+                  text: `${randomText}\n\n${getRandomWatermark()}`,
+                  mentions: [targetJid]
+                });
+              } catch (e: any) {
+                await this.addLog('error', `Ment loop failed: ${e.message}`);
+              }
+            }, intervalMs);
+          }
+        }
+      }
+
+      // 5. Recover Temp Spammer loop
+      if (state.tempChats && state.tempChats.length > 0) {
+        for (const tmco of state.tempChats) {
+          const chatJid = tmco.chatJid;
+          if (!this.tempIntervals.has(chatJid)) {
+            await this.addLog('info', `Resuming Temp Spammer loop in chat ${chatJid}...`);
+            
+            const delaySec = config.delays?.temp || 5;
+            const interval = setInterval(async () => {
+              if (!this.isConnected) {
+                const timer = this.tempIntervals.get(chatJid);
+                if (timer) clearInterval(timer);
+                this.tempIntervals.delete(chatJid);
+                return;
+              }
+              try {
+                const activeTemplates = config.tempTexts || [];
+                if (activeTemplates.length === 0) return;
+                const pickText = activeTemplates[Math.floor(Math.random() * activeTemplates.length)];
+                const textToSend = `${pickText}\n\n${getRandomWatermark()}`;
+                await this.sock.sendMessage(chatJid, { text: textToSend });
+              } catch (err: any) {
+                await this.addLog('error', `Temp Spammer error: ${err.message}`);
+              }
+            }, delaySec * 1000);
+            
+            this.tempIntervals.set(chatJid, interval);
+          }
+        }
+      }
+
+    } catch (err: any) {
+      console.error(`[StateRecovery] Loop recovery error: ${err.message}`);
+      await this.addLog('error', `Active loop recovery crashed: ${err.message}`);
+    }
   }
 }
 
