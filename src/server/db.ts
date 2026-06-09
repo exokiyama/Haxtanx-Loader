@@ -5,7 +5,6 @@ import { BotSession, LogEntry } from '../types.js';
 
 const { Pool } = pg;
 
-// Define default admin credentials
 export const ADMIN_USERNAME = 'haxtanx';
 export const ADMIN_PASSWORD = 'papa%hamza';
 
@@ -15,7 +14,6 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 const LOCAL_DB_PATH = path.join(DATA_DIR, 'supabase_db.json');
 
-// Interface for serialized schemas
 interface LocalDbSchema {
   users: Array<{ id: string; username: string; email: string; password_hash: string; created_at: number }>;
   bot_sessions: Record<string, BotSession>;
@@ -24,7 +22,6 @@ interface LocalDbSchema {
   bot_logs: Record<string, LogEntry[]>;
 }
 
-// In-Memory fallback cache
 let localDb: LocalDbSchema = {
   users: [],
   bot_sessions: {},
@@ -33,38 +30,38 @@ let localDb: LocalDbSchema = {
   bot_logs: {}
 };
 
-// Check if PostgreSQL config is present
 const pgConnString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
 let pgPool: pg.Pool | null = null;
 
-// Initialize connection pool
 if (pgConnString) {
   console.log('[DB] Found Postgres Connection string. Initializing Postgres Client Pool...');
   pgPool = new Pool({
     connectionString: pgConnString,
-    ssl: pgConnString.includes('supabase') || pgConnString.includes('localhost') ? { rejectUnauthorized: false } : undefined,
-    connectionTimeoutMillis: 10000,
+    ssl: { rejectUnauthorized: false },
+    // FIX: Increased timeouts and limited pool size for Railway
+    connectionTimeoutMillis: 30000,   // was 10000 — Railway needs more headroom
+    idleTimeoutMillis: 60000,         // release idle connections after 60s
+    max: 5,                           // Railway free tier caps connections; keep this low
+    allowExitOnIdle: false,
   });
   pgPool.on('error', (err) => {
     console.error('[DB] Unexpected error on Postgres client pool:', err);
   });
 } else {
   console.log('[DB] No Postgres Connection string found. Using local JSON database cache fallback.');
-  // Load local database from file if exists
   if (fs.existsSync(LOCAL_DB_PATH)) {
     try {
       const content = fs.readFileSync(LOCAL_DB_PATH, 'utf-8');
       localDb = { ...localDb, ...JSON.parse(content) };
-      console.log(`[DB] Successfully loaded local database with ${localDb.users.length} users and ${Object.keys(localDb.bot_sessions).length} bot sessions.`);
+      console.log(`[DB] Loaded local database: ${localDb.users.length} users, ${Object.keys(localDb.bot_sessions).length} sessions.`);
     } catch (err) {
-      console.error('[DB] Failed to read local database file. Initializing a new blank one:', err);
+      console.error('[DB] Failed to read local database. Starting fresh:', err);
     }
   }
 }
 
-// Write local JSON database changes
 function saveLocalDb() {
-  if (pgPool) return; // Not using local database
+  if (pgPool) return;
   try {
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(localDb, null, 2), 'utf-8');
   } catch (err) {
@@ -72,7 +69,29 @@ function saveLocalDb() {
   }
 }
 
-// Ensure database tables exist
+// FIX: Generic retry wrapper for transient pg failures (connection timeouts, pool exhaustion)
+async function withRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 3): Promise<T> {
+  let lastErr: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastErr = err;
+      const isRetryable =
+        err.message?.includes('timeout') ||
+        err.message?.includes('Connection terminated') ||
+        err.message?.includes('connect') ||
+        err.code === 'ECONNRESET' ||
+        err.code === 'ETIMEDOUT';
+      if (!isRetryable || attempt === maxAttempts) break;
+      const backoff = attempt * 1500; // 1.5s, 3s
+      console.warn(`[DB] ${label} attempt ${attempt} failed (${err.message}). Retrying in ${backoff}ms...`);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
 export async function initDb() {
   if (pgPool) {
     try {
@@ -126,16 +145,15 @@ export async function initDb() {
         client.release();
       }
     } catch (err) {
-      console.error('[DB] Failed to connect or initialize Postgres tables. Temporarily falling back to local file!', err);
-      pgPool = null; // Mark pool as inactive so we fallback to local file
+      console.error('[DB] Failed to connect or initialize Postgres tables. Falling back to local file!', err);
+      pgPool = null;
     }
   }
 
-  // Always pre-populate the administrator user 'haxtanx' if not already created
   try {
     const adminExists = await getUser(ADMIN_USERNAME);
     if (!adminExists) {
-      console.log(`[DB] Admin account '${ADMIN_USERNAME}' not present on boot. Provisioning account...`);
+      console.log(`[DB] Admin account '${ADMIN_USERNAME}' not present. Provisioning...`);
       await registerUser(ADMIN_USERNAME, 'haxtanx@nexuswa.com', ADMIN_PASSWORD);
     }
   } catch (err) {
@@ -151,19 +169,16 @@ export async function getUser(usernameOrEmail: string) {
   const normalized = usernameOrEmail.toLowerCase().trim();
   if (pgPool) {
     try {
-      const res = await pgPool.query(
-        'SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $2 LIMIT 1',
-        [normalized, normalized]
+      const res = await withRetry(
+        () => pgPool!.query(
+          'SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $2 LIMIT 1',
+          [normalized, normalized]
+        ),
+        'getUser'
       );
       if (res.rows.length > 0) {
         const u = res.rows[0];
-        return {
-          id: u.id,
-          username: u.username,
-          email: u.email,
-          password_hash: u.password_hash,
-          created_at: Number(u.created_at)
-        };
+        return { id: u.id, username: u.username, email: u.email, password_hash: u.password_hash, created_at: Number(u.created_at) };
       }
       return null;
     } catch (err) {
@@ -171,10 +186,7 @@ export async function getUser(usernameOrEmail: string) {
       return null;
     }
   } else {
-    const found = localDb.users.find(
-      u => u.username.toLowerCase() === normalized || u.email.toLowerCase() === normalized
-    );
-    return found || null;
+    return localDb.users.find(u => u.username.toLowerCase() === normalized || u.email.toLowerCase() === normalized) || null;
   }
 }
 
@@ -186,9 +198,12 @@ export async function registerUser(username: string, email: string, password_has
 
   if (pgPool) {
     try {
-      await pgPool.query(
-        'INSERT INTO users (id, username, email, password_hash, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [newUserId, cleanedUsername, cleanedEmail, password_hash, now]
+      await withRetry(
+        () => pgPool!.query(
+          'INSERT INTO users (id, username, email, password_hash, created_at) VALUES ($1, $2, $3, $4, $5)',
+          [newUserId, cleanedUsername, cleanedEmail, password_hash, now]
+        ),
+        'registerUser'
       );
       return { id: newUserId, username: cleanedUsername, email: cleanedEmail };
     } catch (err: any) {
@@ -196,20 +211,11 @@ export async function registerUser(username: string, email: string, password_has
       throw new Error(err.message || 'Registration failed');
     }
   } else {
-    // Check duplicates locally
     const duplicate = localDb.users.find(
       u => u.username.toLowerCase() === cleanedUsername.toLowerCase() || u.email.toLowerCase() === cleanedEmail
     );
-    if (duplicate) {
-      throw new Error('Username or Email already registered');
-    }
-    const newUser = {
-      id: newUserId,
-      username: cleanedUsername,
-      email: cleanedEmail,
-      password_hash,
-      created_at: now
-    };
+    if (duplicate) throw new Error('Username or Email already registered');
+    const newUser = { id: newUserId, username: cleanedUsername, email: cleanedEmail, password_hash, created_at: now };
     localDb.users.push(newUser);
     saveLocalDb();
     return { id: newUserId, username: cleanedUsername, email: cleanedEmail };
@@ -223,7 +229,10 @@ export async function registerUser(username: string, email: string, password_has
 export async function getSessions(ownerId: string): Promise<BotSession[]> {
   if (pgPool) {
     try {
-      const res = await pgPool.query('SELECT payload FROM bot_sessions WHERE owner_id = $1', [ownerId]);
+      const res = await withRetry(
+        () => pgPool!.query('SELECT payload FROM bot_sessions WHERE owner_id = $1', [ownerId]),
+        'getSessions'
+      );
       return res.rows.map(row => JSON.parse(row.payload) as BotSession);
     } catch (err) {
       console.error('[DB] getSessions failed:', err);
@@ -234,30 +243,31 @@ export async function getSessions(ownerId: string): Promise<BotSession[]> {
   }
 }
 
-// For system bot scans (reconnect all on restart)
 export async function getAllActiveSessions(): Promise<BotSession[]> {
   if (pgPool) {
     try {
-      const res = await pgPool.query("SELECT payload FROM bot_sessions WHERE status IN ('Connected', 'Connecting')");
+      const res = await withRetry(
+        () => pgPool!.query("SELECT payload FROM bot_sessions WHERE status IN ('Connected', 'Connecting')"),
+        'getAllActiveSessions'
+      );
       return res.rows.map(row => JSON.parse(row.payload) as BotSession);
     } catch (err) {
       console.error('[DB] getAllActiveSessions failed:', err);
       return [];
     }
   } else {
-    return Object.values(localDb.bot_sessions).filter(
-      s => s.status === 'Connected' || s.status === 'Connecting'
-    );
+    return Object.values(localDb.bot_sessions).filter(s => s.status === 'Connected' || s.status === 'Connecting');
   }
 }
 
 export async function getSession(sessionId: string): Promise<BotSession | null> {
   if (pgPool) {
     try {
-      const res = await pgPool.query('SELECT payload FROM bot_sessions WHERE id = $1 LIMIT 1', [sessionId]);
-      if (res.rows.length > 0) {
-        return JSON.parse(res.rows[0].payload) as BotSession;
-      }
+      const res = await withRetry(
+        () => pgPool!.query('SELECT payload FROM bot_sessions WHERE id = $1 LIMIT 1', [sessionId]),
+        'getSession'
+      );
+      if (res.rows.length > 0) return JSON.parse(res.rows[0].payload) as BotSession;
       return null;
     } catch (err) {
       console.error('[DB] getSession failed:', err);
@@ -272,11 +282,14 @@ export async function saveSession(session: BotSession): Promise<void> {
   if (pgPool) {
     try {
       const payloadStr = JSON.stringify(session);
-      await pgPool.query(
-        `INSERT INTO bot_sessions (id, owner_id, name, status, payload, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (id) DO UPDATE SET owner_id = $2, name = $3, status = $4, payload = $5`,
-        [session.id, session.ownerId, session.name, session.status, payloadStr, session.createdAt || Date.now()]
+      await withRetry(
+        () => pgPool!.query(
+          `INSERT INTO bot_sessions (id, owner_id, name, status, payload, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO UPDATE SET owner_id = $2, name = $3, status = $4, payload = $5`,
+          [session.id, session.ownerId, session.name, session.status, payloadStr, session.createdAt || Date.now()]
+        ),
+        'saveSession'
       );
     } catch (err) {
       console.error('[DB] saveSession failed:', err);
@@ -297,7 +310,7 @@ export async function updateSessionFields(sessionId: string, fields: Partial<Bot
 export async function deleteSession(sessionId: string): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query('DELETE FROM bot_sessions WHERE id = $1', [sessionId]);
+      await withRetry(() => pgPool!.query('DELETE FROM bot_sessions WHERE id = $1', [sessionId]), 'deleteSession');
     } catch (err) {
       console.error('[DB] deleteSession failed:', err);
     }
@@ -314,10 +327,11 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function getBaileysCreds(sessionId: string): Promise<any | null> {
   if (pgPool) {
     try {
-      const res = await pgPool.query('SELECT data FROM baileys_creds WHERE session_id = $1 LIMIT 1', [sessionId]);
-      if (res.rows.length > 0) {
-        return JSON.parse(res.rows[0].data);
-      }
+      const res = await withRetry(
+        () => pgPool!.query('SELECT data FROM baileys_creds WHERE session_id = $1 LIMIT 1', [sessionId]),
+        'getBaileysCreds'
+      );
+      if (res.rows.length > 0) return JSON.parse(res.rows[0].data);
       return null;
     } catch (err) {
       console.error('[DB] getBaileysCreds failed:', err);
@@ -331,14 +345,18 @@ export async function getBaileysCreds(sessionId: string): Promise<any | null> {
 export async function saveBaileysCreds(sessionId: string, data: any): Promise<void> {
   if (pgPool) {
     try {
-      const dataStr = JSON.stringify(data);
-      await pgPool.query(
-        `INSERT INTO baileys_creds (session_id, data) VALUES ($1, $2)
-         ON CONFLICT (session_id) DO UPDATE SET data = $2`,
-        [sessionId, dataStr]
+      // FIX: retry on transient connection failures during creds save
+      await withRetry(
+        () => pgPool!.query(
+          `INSERT INTO baileys_creds (session_id, data) VALUES ($1, $2)
+           ON CONFLICT (session_id) DO UPDATE SET data = $2`,
+          [sessionId, JSON.stringify(data)]
+        ),
+        'saveBaileysCreds'
       );
     } catch (err) {
-      console.error('[DB] saveBaileysCreds failed:', err);
+      // FIX: log but do NOT throw — a failed creds save must not crash the session
+      console.error('[DB] saveBaileysCreds failed (non-fatal):', err);
     }
   } else {
     localDb.baileys_creds[sessionId] = data;
@@ -349,7 +367,7 @@ export async function saveBaileysCreds(sessionId: string, data: any): Promise<vo
 export async function deleteBaileysCreds(sessionId: string): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query('DELETE FROM baileys_creds WHERE session_id = $1', [sessionId]);
+      await withRetry(() => pgPool!.query('DELETE FROM baileys_creds WHERE session_id = $1', [sessionId]), 'deleteBaileysCreds');
     } catch (err) {
       console.error('[DB] deleteBaileysCreds failed:', err);
     }
@@ -366,13 +384,14 @@ export async function deleteBaileysCreds(sessionId: string): Promise<void> {
 export async function getBaileysKey(sessionId: string, keyId: string): Promise<any | null> {
   if (pgPool) {
     try {
-      const res = await pgPool.query(
-        'SELECT val FROM baileys_keys WHERE session_id = $1 AND key_id = $2 LIMIT 1',
-        [sessionId, keyId]
+      const res = await withRetry(
+        () => pgPool!.query(
+          'SELECT val FROM baileys_keys WHERE session_id = $1 AND key_id = $2 LIMIT 1',
+          [sessionId, keyId]
+        ),
+        'getBaileysKey'
       );
-      if (res.rows.length > 0) {
-        return JSON.parse(res.rows[0].val);
-      }
+      if (res.rows.length > 0) return JSON.parse(res.rows[0].val);
       return null;
     } catch (err) {
       console.error('[DB] getBaileysKey failed:', err);
@@ -387,19 +406,21 @@ export async function getBaileysKey(sessionId: string, keyId: string): Promise<a
 export async function saveBaileysKey(sessionId: string, keyId: string, val: any): Promise<void> {
   if (pgPool) {
     try {
-      const valStr = JSON.stringify(val);
-      await pgPool.query(
-        `INSERT INTO baileys_keys (session_id, key_id, val) VALUES ($1, $2, $3)
-         ON CONFLICT (session_id, key_id) DO UPDATE SET val = $3`,
-        [sessionId, keyId, valStr]
+      // FIX: retry on transient failures; do NOT throw on final failure
+      await withRetry(
+        () => pgPool!.query(
+          `INSERT INTO baileys_keys (session_id, key_id, val) VALUES ($1, $2, $3)
+           ON CONFLICT (session_id, key_id) DO UPDATE SET val = $3`,
+          [sessionId, keyId, JSON.stringify(val)]
+        ),
+        'saveBaileysKey'
       );
     } catch (err) {
-      console.error('[DB] saveBaileysKey failed:', err);
+      // FIX: log but do NOT throw — individual key save failure must not crash the session
+      console.error(`[DB] saveBaileysKey failed for ${sessionId}/${keyId} (non-fatal):`, err);
     }
   } else {
-    if (!localDb.baileys_keys[sessionId]) {
-      localDb.baileys_keys[sessionId] = {};
-    }
+    if (!localDb.baileys_keys[sessionId]) localDb.baileys_keys[sessionId] = {};
     localDb.baileys_keys[sessionId][keyId] = val;
     saveLocalDb();
   }
@@ -408,9 +429,12 @@ export async function saveBaileysKey(sessionId: string, keyId: string, val: any)
 export async function deleteBaileysKey(sessionId: string, keyId: string): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query('DELETE FROM baileys_keys WHERE session_id = $1 AND key_id = $2', [sessionId, keyId]);
+      await withRetry(
+        () => pgPool!.query('DELETE FROM baileys_keys WHERE session_id = $1 AND key_id = $2', [sessionId, keyId]),
+        'deleteBaileysKey'
+      );
     } catch (err) {
-      console.error('[DB] deleteBaileysKey failed:', err);
+      console.error('[DB] deleteBaileysKey failed (non-fatal):', err);
     }
   } else {
     if (localDb.baileys_keys[sessionId]) {
@@ -423,7 +447,7 @@ export async function deleteBaileysKey(sessionId: string, keyId: string): Promis
 export async function clearBaileysKeys(sessionId: string): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query('DELETE FROM baileys_keys WHERE session_id = $1', [sessionId]);
+      await withRetry(() => pgPool!.query('DELETE FROM baileys_keys WHERE session_id = $1', [sessionId]), 'clearBaileysKeys');
     } catch (err) {
       console.error('[DB] clearBaileysKeys failed:', err);
     }
@@ -440,11 +464,13 @@ export async function clearBaileysKeys(sessionId: string): Promise<void> {
 export async function getLogs(sessionId: string, limitAmount = 50): Promise<LogEntry[]> {
   if (pgPool) {
     try {
-      const res = await pgPool.query(
-        'SELECT * FROM bot_logs WHERE session_id = $1 ORDER BY timestamp DESC LIMIT $2',
-        [sessionId, limitAmount]
+      const res = await withRetry(
+        () => pgPool!.query(
+          'SELECT * FROM bot_logs WHERE session_id = $1 ORDER BY timestamp DESC LIMIT $2',
+          [sessionId, limitAmount]
+        ),
+        'getLogs'
       );
-      // Map to standard LogEntry layout
       return res.rows.map(row => ({
         id: row.id,
         timestamp: Number(row.timestamp),
@@ -464,23 +490,19 @@ export async function getLogs(sessionId: string, limitAmount = 50): Promise<LogE
 export async function addLog(sessionId: string, entry: LogEntry): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query(
+      // FIX: No retry on logs — fire and forget, never block on log writes
+      pgPool.query(
         'INSERT INTO bot_logs (id, session_id, level, message, timestamp) VALUES ($1, $2, $3, $4, $5)',
         [entry.id, sessionId, entry.level, entry.message, entry.timestamp]
-      );
+      ).catch(err => console.warn('[DB] addLog fire-and-forget failed:', err));
     } catch (err) {
-      console.error('[DB] addLog failed:', err);
+      // Silently ignore log write failures
     }
   } else {
-    if (!localDb.bot_logs[sessionId]) {
-      localDb.bot_logs[sessionId] = [];
-    }
+    if (!localDb.bot_logs[sessionId]) localDb.bot_logs[sessionId] = [];
     const list = localDb.bot_logs[sessionId];
     list.push(entry);
-    // Cap to 100 logs per session inside local DB file to avoid bloat
-    if (list.length > 100) {
-      localDb.bot_logs[sessionId] = list.slice(-100);
-    }
+    if (list.length > 100) localDb.bot_logs[sessionId] = list.slice(-100);
     saveLocalDb();
   }
 }
@@ -488,7 +510,7 @@ export async function addLog(sessionId: string, entry: LogEntry): Promise<void> 
 export async function clearLogs(sessionId: string): Promise<void> {
   if (pgPool) {
     try {
-      await pgPool.query('DELETE FROM bot_logs WHERE session_id = $1', [sessionId]);
+      await withRetry(() => pgPool!.query('DELETE FROM bot_logs WHERE session_id = $1', [sessionId]), 'clearLogs');
     } catch (err) {
       console.error('[DB] clearLogs failed:', err);
     }

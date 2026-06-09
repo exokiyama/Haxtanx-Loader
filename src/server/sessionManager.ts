@@ -218,24 +218,33 @@ async function useFirestoreAuthState(sessionId: string) {
       return data;
     },
     set: async (data: any) => {
-      const tasks: Promise<any>[] = [];
+      // FIX: Sequential with individual try/catch instead of Promise.all
+      // Promise.all means ONE timeout kills ALL key writes, corrupting auth state
       for (const type in data) {
         for (const id in data[type]) {
           const value = data[type][id];
           const keyId = `${type}_${id}`;
-          if (value === null) {
-            tasks.push(deleteBaileysKey(sessionId, keyId));
-          } else {
-            tasks.push(saveBaileysKey(sessionId, keyId, JSON.parse(JSON.stringify(value, BufferJSON.replacer))));
+          try {
+            if (value === null) {
+              await deleteBaileysKey(sessionId, keyId);
+            } else {
+              await saveBaileysKey(sessionId, keyId, JSON.parse(JSON.stringify(value, BufferJSON.replacer)));
+            }
+          } catch (err) {
+            console.warn(`[AuthState] Key save failed for ${keyId} (continuing):`, err);
           }
         }
       }
-      await Promise.all(tasks);
     }
   };
 
   const saveCreds = async () => {
-    await saveBaileysCreds(sessionId, JSON.parse(JSON.stringify(creds, BufferJSON.replacer)));
+    try {
+      await saveBaileysCreds(sessionId, JSON.parse(JSON.stringify(creds, BufferJSON.replacer)));
+    } catch (err) {
+      // FIX: Never let a creds save failure crash the connection handler
+      console.error('[AuthState] saveCreds failed (non-fatal):', err);
+    }
   };
 
   return {
@@ -1708,7 +1717,7 @@ class WhatsAppSessionManager {
       } catch (err) {
         console.error('[Supervisor] Keep-alive daemon error:', err);
       }
-    }, 45000);
+    }, 120000); // FIX: was 45s — too aggressive, caused reconnect storms on Railway
   }
 
   public registerGlobalBinder(binder: (sessionId: string, inst: WhatsAppBotInstance) => void) {
