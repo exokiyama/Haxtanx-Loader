@@ -448,6 +448,37 @@ export class WhatsAppBotInstance {
             return;
           }
 
+          // FIX: Handling 515 (restartRequired) separately to avoid offline DB states and warnings
+          if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+            await this.addLog('info', 'WhatsApp requested hot restart (Code 515). Reconnecting immediately...');
+            if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null;
+              if (!this.isConnected && !this.isConnecting) {
+                this.connect(phoneNumberToPair);
+              }
+            }, 500);
+            return;
+          }
+
+          // FIX: Handling 440 (connectionReplaced) with long delay to stop "rolling deployment fight loops" on Railway
+          if (statusCode === DisconnectReason.connectionReplaced || statusCode === 440) {
+            reason = 'Connection replaced by another active session or deployment.';
+            if (this.onStatusCallback) this.onStatusCallback('Disconnected', reason);
+            const sessionRef = doc(db, 'sessions', this.sessionId);
+            await updateDoc(sessionRef, { status: 'Disconnected', errorReason: reason }).catch(() => {});
+            await this.addLog('warn', 'Session replaced (Code 440). Delaying reconnect by 90 seconds to allow the other instance to comfortably run...');
+            
+            if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null;
+              if (!this.isConnected && !this.isConnecting) {
+                this.connect(phoneNumberToPair);
+              }
+            }, 90000); // 90 seconds delay to let old containers shutdown calmly on Railway
+            return;
+          }
+
           if (this.onStatusCallback) this.onStatusCallback('Disconnected', reason);
           const sessionRef = doc(db, 'sessions', this.sessionId);
           await updateDoc(sessionRef, { status: 'Disconnected', errorReason: reason }).catch(() => {});

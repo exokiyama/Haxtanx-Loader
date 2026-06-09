@@ -537,6 +537,7 @@ async function startServer() {
     console.log(`  Fullstack WhatsApp Dashboard Active!`);
     console.log(`  Url: http://localhost:${PORT}`);
     console.log(`  Targeting PORT 3000 ingress channel.`);
+    console.log(`  Current Process PID: ${process.pid}`);
     console.log(`=========================================`);
     
     // Start active warm elements
