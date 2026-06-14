@@ -257,20 +257,20 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
           <div className="absolute top-0 left-0 w-48 h-48 bg-[#25D366]/5 rounded-full blur-3xl pointer-events-none" />
           
           <h3 className="text-base font-bold text-white mb-2 flex items-center justify-center gap-1.5 font-sans">
-            🔑 Establish WhatsApp Authentication Session
+            🔑 Haxtanx Session Generator
           </h3>
           <p className="text-xs text-slate-400 max-w-lg mb-6 leading-relaxed">
-            Link this micro-tenant bot instance using standard End-to-End WebSocket handshakes. Choose between Instant QR Scan or CLI Phone Pairing Code PIN.
+            Choose between QR Scan or Phone Pairing Code .
           </p>
 
           {sessionStatus === 'Connecting' && !wsQr && !wsPairing ? (
             <div className="py-12 flex flex-col items-center justify-center">
               <span className="w-8 h-8 border-3 border-[#25D366]/30 border-t-[#25D366] rounded-full animate-spin mb-4" />
               <p className="text-xs text-[#25D366] font-semibold animate-pulse tracking-wide font-mono">
-                [SYS] COMPILING SECURE E2E KEY EXCHANGE STREAM...
+                [HAX] COMPILING SECURE CONNECTION WITH DADDY HAAMZA BOT...
               </p>
               <p className="text-[10px] text-gray-500 mt-1 max-w-xs">
-                Generating WhatsApp secure authorization handshakes on port 3000. This handles ephemeral database state caching and takes about 5-10 seconds.
+                Generating WhatsApp secure authorization by using baileys. This will takes about 5-10 seconds.
               </p>
             </div>
           ) : sessionStatus === 'Disconnected' && !wsQr && !wsPairing ? (
@@ -280,7 +280,7 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
               <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] font-bold text-[#25D366] tracking-wider mb-2 flex items-center gap-1 font-mono">
-                    <Smartphone className="w-3.5 h-3.5" /> OPTION A: INSTANT QR CODE
+                    <Smartphone className="w-3.5 h-3.5" /> OPTION A: QR CODE
                   </span>
                   <h4 className="text-xs font-bold text-white mb-1.5">Scan with Linked Devices</h4>
                   <p className="text-[11px] text-gray-400 leading-relaxed">
@@ -307,11 +307,11 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
               <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] font-bold text-pink-500 tracking-wider mb-2 flex items-center gap-1 font-mono">
-                    <KeyRound className="w-3.5 h-3.5" /> OPTION B: CLI / PHONE PAIRING
+                    <KeyRound className="w-3.5 h-3.5" /> OPTION B:PAIRING CODE
                   </span>
                   <h4 className="text-xs font-bold text-white mb-1.5">Pair with Mobile Number</h4>
                   <p className="text-[11px] text-gray-400 leading-relaxed">
-                    Generate an 8-character terminal pairing PIN to authorize without scanning an active display screen.
+                    Generate an 8 digit code to authorize without scanning QR an active display screen.
                   </p>
                 </div>
 
@@ -336,7 +336,7 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
                       <span className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" />
                     ) : (
                       <>
-                        <KeyRound className="w-3.5 h-3.5" /> Spin up and Get CLI PIN
+                        <KeyRound className="w-3.5 h-3.5" /> Spin up and Get Pairing Code
                       </>
                     )}
                   </button>
@@ -372,7 +372,7 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
               {/* Right Side: Pairing Code Display */}
               <div className="bg-[#0A0A0A] border border-[#262626] p-6 rounded-xl flex flex-col items-center h-full justify-between">
                 <span className="text-[10px] font-bold text-gray-500 tracking-wider mb-3 flex items-center gap-1">
-                  <KeyRound className="w-3.5 h-3.5 text-pink-500" /> METHOD B: PHONE PIN CODE
+                  <KeyRound className="w-3.5 h-3.5 text-pink-500" /> METHOD B: PAIRING CODE
                 </span>
 
                 {wsPairing ? (
@@ -387,13 +387,13 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
                       </button>
                     </div>
                     <p className="text-[10px] text-gray-500 text-center mt-3 max-w-xs leading-normal">
-                      Take this authentication key and paste it inside WhatsApp &rsaquo; Linked Devices link prompt.
+                      Take this authentication key and paste it inside WhatsApp &rsaquo; Linked Devices .
                     </p>
                   </div>
                 ) : (
                   <div className="w-full font-sans text-center">
                     <p className="text-[11px] text-gray-500 leading-normal mb-3 max-w-xs mx-auto">
-                      Need a temporary Pairing PIN? Supply your terminal target phone and click requesting.
+                      Need a temporary Pairing CODE? Supply your terminal target phone and click requesting.
                     </p>
                     <input
                       type="text"
@@ -410,7 +410,7 @@ export const ActiveSessionView: React.FC<ActiveSessionViewProps> = ({ session, o
                       {loading ? (
                         <span className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" />
                       ) : (
-                        'Generate Pairing Code PIN'
+                        'Generate Pairing Code'
                       )}
                     </button>
                   </div>
