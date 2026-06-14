@@ -44,8 +44,8 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
       // Create a guest account on-the-fly
       const guestId = 'guest_' + Math.random().toString(36).substring(2, 7);
       const { error } = await supabase.auth.signUp({
-        username: `Sandbox Guest`,
-        email: `${guestId}@nexuswa.com`,
+        username: `Haxtanx Guest`,
+        email: `${guestId}@haxtanx.com`,
         password: `password_guest`
       });
       if (error) {
@@ -77,7 +77,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
         let displayName = inputVal;
         
         if (!emailAddress.includes('@')) {
-          emailAddress = `${inputVal.toLowerCase()}@nexuswa.com`;
+          emailAddress = `${inputVal.toLowerCase()}@haxtanx.com`;
         } else {
           displayName = emailAddress.split('@')[0];
         }
@@ -96,7 +96,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
           password
         });
         if (error) {
-          setErrorMsg(error.message || 'Incorrect credentials. Hint: administrator login password is papa%hamza.');
+          setErrorMsg(error.message || 'Incorrect credentials.');
         }
       }
     } catch (err: any) {
@@ -122,10 +122,10 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
             <Bot className="w-8 h-8 text-[#25D366]" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white mb-1.5 font-sans">
-            NexusWA Loader Bot Panel
+            Haxtanx Wa Loader Bot Panel
           </h1>
           <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
-            Scalable multi-tenant WhatsApp Bot Management. Developed by Daddy hamza.
+            Developed by Daddy hamza.
           </p>
         </div>
 
@@ -170,7 +170,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="text"
-                placeholder={isRegister ? "New Username or Email Address" : "haxtanx or your email"}
+                placeholder={isRegister ? "New Username or Email Address" : "username or your email"}
                 value={usernameOrEmail}
                 onChange={(e) => setUsernameOrEmail(e.target.value)}
                 disabled={loading}
@@ -187,7 +187,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
               <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="password"
-                placeholder={isRegister ? "Minimum 6 characters" : "papa%hamza or password"}
+                placeholder={isRegister ? "Minimum 6 characters" : "Enter Your Password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
@@ -218,7 +218,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
         <div className="relative flex py-2 items-center">
           <div className="flex-grow border-t border-[#262626]" />
           <span className="flex-shrink mx-4 text-[9px] text-gray-500 uppercase tracking-widest font-semibold">
-            Social & Dev Integrations
+            Google & Guest Integrations
           </span>
           <div className="flex-grow border-t border-[#262626]" />
         </div>
@@ -237,7 +237,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
             disabled={loading}
             className="w-full h-10 bg-[#0A0A0A] border border-[#262626] hover:bg-[#262626] hover:text-white active:scale-[0.98] transition-all text-gray-300 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 cursor-pointer"
           >
-            <Sparkles className="w-3.5 h-3.5 text-[#25D366]" /> Enter Developer Sandbox Mode
+            <Sparkles className="w-3.5 h-3.5 text-[#25D366]" /> Sign In with Guest Account
           </button>
         </div>
 
@@ -245,7 +245,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
         <div className="mt-8 pt-5 border-t border-[#262626] flex items-start gap-2.5 text-[10px] text-gray-500 leading-relaxed font-sans">
           <ShieldAlert className="w-4 h-4 shrink-0 text-gray-600 mt-0.5" />
           <p>
-            This applet is fully integrated with Supabase PostgreSQL and Google Claims. Authorized access only. Developed with excellence by Daddy hamza.
+            Authorized access only. Developed by Daddy hamza.
           </p>
         </div>
 
@@ -262,54 +262,29 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
                 <Sparkles className="w-5 h-5 text-[#4285F4]" />
               </div>
               <h2 className="text-base font-bold text-white font-sans">Choose Google Account</h2>
-              <p className="text-[10px] text-slate-400">to continue to NexusWA Loader Bot Panel</p>
+              <p className="text-[10px] text-slate-400">to continue to HaxtanxWA Loader Bot Panel</p>
             </div>
 
-            {/* List of Mock/Developer Profiles */}
-            <div className="space-y-2 mb-4">
-              {[
-                { name: 'Daddy Hamza', email: 'hamza@nexuswa.com', desc: 'Main Administrator Account' },
-                { name: 'Sam Hax', email: 'samhaxofficial@gmail.com', desc: 'Lead Developer Account' },
-                { name: 'Eren Htr Owner', email: 'eren@nexuswa.com', desc: 'Target Monitor Partner' }
-              ].map((prof) => (
-                <button
-                  key={prof.email}
-                  type="button"
-                  onClick={() => handleGoogleSignIn(prof.name, prof.email)}
-                  className="w-full text-left p-3 rounded-lg bg-[#0A0A0A] border border-[#262626] hover:border-[#25D366] hover:bg-white/5 transition-all flex items-center gap-3 group cursor-pointer"
-                >
-                  <div className="w-8 h-8 rounded-full bg-[#25D366]/10 text-[#25D366] flex items-center justify-center text-xs font-bold font-sans uppercase">
-                    {prof.name.slice(0, 2)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-white group-hover:text-[#25D366] truncate">{prof.name}</p>
-                    <p className="text-[9px] text-slate-500 truncate">{prof.email}</p>
-                  </div>
-                  <div className="text-[8px] bg-white/5 px-1.5 py-0.5 rounded text-slate-400">
-                    {prof.desc}
-                  </div>
-                </button>
-              ))}
-            </div>
+                  
 
-            {/* Custom inputs */}
+           {/* Custom inputs */}
             <div className="relative flex py-1.5 items-center mb-3">
               <div className="flex-grow border-t border-[#262626]" />
-              <span className="flex-shrink mx-3 text-[8px] text-gray-500 uppercase tracking-widest font-semibold">Or use custom developer profile</span>
+              <span className="flex-shrink mx-3 text-[8px] text-gray-500 uppercase tracking-widest font-semibold">use custom profile</span>
               <div className="flex-grow border-t border-[#262626]" />
             </div>
 
             <div className="space-y-2.5 mb-5">
               <input
                 type="text"
-                placeholder="Google Account Display Name"
+                placeholder="Username"
                 value={customGoogleName}
                 onChange={(e) => setCustomGoogleName(e.target.value)}
                 className="w-full h-9 px-3 bg-[#0A0A0A] border border-[#262626] rounded-lg text-xs text-white focus:border-[#25D366] focus:outline-none transition-all placeholder:text-gray-600"
               />
               <input
                 type="email"
-                placeholder="Google Account Email"
+                placeholder="Email"
                 value={customGoogleEmail}
                 onChange={(e) => setCustomGoogleEmail(e.target.value)}
                 className="w-full h-9 px-3 bg-[#0A0A0A] border border-[#262626] rounded-lg text-xs text-white focus:border-[#25D366] focus:outline-none transition-all placeholder:text-gray-600"
@@ -323,7 +298,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = () => {
                 }}
                 className="w-full h-9 bg-[#25D366] hover:bg-opacity-95 text-black font-semibold text-xs rounded-lg transition-all active:scale-[0.98] cursor-pointer"
               >
-                Authenticate Custom Profile
+                Authenticate Profile
               </button>
             </div>
 
